@@ -54,7 +54,7 @@ def obtener_config() -> dict:
 
     from Config.Configuracion import CargarVault
     secretos = CargarVault(
-        filtro_tags={"shared": "true", "environment": "dev"},
+        nombres=["Dev-DBName", "Dev-DBPassword", "Dev-DBServer", "Dev-DBUser"],
         strip_prefix="Dev",
     )
 
