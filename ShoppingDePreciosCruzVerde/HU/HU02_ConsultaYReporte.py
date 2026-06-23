@@ -51,7 +51,7 @@ from selenium.webdriver.common.by import By
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
-from Funciones.utils import write_log, conectar_bd, enviar_correo
+from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, enviar_correo
 
 
 ESPERA_CARGA  = 6    # segundos para que cargue Angular
@@ -271,20 +271,31 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         lote         = int(in_config.get("LoteCruzVerde",  str(_LOTE_DEFAULT)))
         delay        = int(in_config.get("DelayCruzVerde", "300"))
 
-        # ── PASO 1: Insertar nuevos registros ─────────────────────────────
-        conn   = conectar_bd(in_config)
-        cursor = conn.cursor()
-        cursor.execute(f"""
-            SELECT a.Id FROM {esquema}.{tabla_ins} a
-            LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
-            WHERE b.Id IS NULL AND a.Estado='1'
-        """)
-        hay_nuevos = cursor.fetchone() is not None
-
-        if hay_nuevos:
-            if debug:
-                write_log("Info", f"[DEBUG] INSERT en {tabla_ex} omitido", task_name, in_config)
+        # ── PASO 1 + PASO 2: Verificar registros (debug → SQLite / normal → SQL Server) ──
+        if debug:
+            conn_sq = conectar_bd_debug()
+            cur_sq  = conn_sq.cursor()
+            cur_sq.execute("SELECT COUNT(*) FROM TicketInsumo WHERE Estado=1")
+            cnt = cur_sq.fetchone()[0] or 0
+            conn_sq.close()
+            hay_pendientes = cnt > 0
+            if hay_pendientes:
+                write_log("Info",
+                          f"[DEBUG] {cnt} registros en pruebas.db TicketInsumo con Estado=1",
+                          task_name, in_config)
             else:
+                write_log("Info",
+                          "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1",
+                          task_name, in_config)
+        else:
+            conn   = conectar_bd(in_config)
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT a.Id FROM {esquema}.{tabla_ins} a
+                LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
+                WHERE b.Id IS NULL AND a.Estado='1'
+            """)
+            if cursor.fetchone() is not None:
                 cursor.execute(f"""
                     INSERT INTO {esquema}.{tabla_ex}
                         ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
@@ -302,15 +313,10 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     WHERE b.Id IS NULL AND a.Estado='1'
                 """)
                 write_log("Info", f"HU02: Nuevos registros insertados en {tabla_ex}", task_name, in_config)
-
-        # ── PASO 2: Verificar pendientes ──────────────────────────────────
-        if debug:
-            cursor.execute(f"SELECT TOP(1) 1 FROM {esquema}.{tabla_ins} WHERE Estado='1'")
-        else:
             cursor.execute(f"SELECT TOP(1) 1 FROM {esquema}.{tabla_ex} WHERE Estado='1'")
-        hay_pendientes = cursor.fetchone() is not None
-        conn.commit()
-        conn.close()
+            hay_pendientes = cursor.fetchone() is not None
+            conn.commit()
+            conn.close()
 
         if not hay_pendientes:
             write_log("Info", "HU02: No existen registros pendientes", task_name, in_config)
@@ -480,36 +486,37 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
 
 def _scraping_debug(in_config, esquema, tabla_ins, url_template,
                     ruta_ss_base, task_name):
+    """Lee de pruebas.db, hace scraping, escribe en pruebas.db (CruzVerde) y genera Excel."""
     lote_debug = int(in_config.get("LoteDebug", "3"))
-    conn   = conectar_bd(in_config)
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT TOP({lote_debug}) [Id],[EAN],
-            LEFT(LTRIM(SUBSTRING(Descripcion,
-                PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%',Descripcion),100)),
-                CHARINDEX(' ',LTRIM(SUBSTRING(Descripcion,
-                    PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%',Descripcion),100))+' ')-1),
-            [Descripcion]
-        FROM {esquema}.{tabla_ins} WHERE Estado='1'
-    """)
-    registros = cursor.fetchall()
-    conn.close()
+    conn_sq = conectar_bd_debug()
+    cur_sq  = conn_sq.cursor()
+    cur_sq.execute(
+        "SELECT Id, EAN, Descripcion FROM TicketInsumo WHERE Estado=1 LIMIT ?",
+        (lote_debug,)
+    )
+    registros = cur_sq.fetchall()
 
     if not registros:
-        write_log("Info", "[DEBUG] No hay registros en TicketInsumo", task_name, in_config)
+        write_log("Info", "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1",
+                  task_name, in_config)
+        conn_sq.close()
         return
 
     resultados = []
     driver = _crear_driver(headless=False)
     try:
         for row in registros:
-            id_t, ean, kw, desc = str(row[0]), str(row[1]), str(row[2] or ""), str(row[3] or "")
+            id_t = str(row[0])
+            ean  = str(row[1])
+            desc = str(row[2] or "")
+            m    = re.search(r'[a-zA-Z]{3,}', desc)
+            kw   = m.group(0) if m else ""
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
             res = _consultar_ean_cruzverde(driver, ean, kw, url_template,
                                            ruta_ss, in_config, task_name)
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
-            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, **res})
+            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
     finally:
         try:
             driver.quit()
@@ -517,6 +524,31 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template,
             pass
 
     if resultados:
+        ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        maquina = socket.gethostname()
+        cur_sq.execute("DELETE FROM CruzVerde")
+        for r in resultados:
+            cur_sq.execute(
+                "INSERT INTO CruzVerde "
+                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
+                " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
+                " BannerProducto, UrlProducto, RutaImagen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (ahora, ahora, ahora,
+                 r.get("estado", "99"), r.get("observaciones", ""), 0, maquina,
+                 "", r["EAN"], r["Descripcion"], "", ahora,
+                 r.get("marca", ""), r.get("nombre_prd", ""), "",
+                 r.get("precio_unitario", ""), r.get("precio_con_desc", ""),
+                 r.get("precio_sin_desc", ""), r.get("porc_descuento", ""),
+                 r.get("precio_fidelizacion", ""), r.get("banner", ""),
+                 r.get("url_producto", ""), r.get("RutaImagen", ""))
+            )
+        conn_sq.commit()
+        write_log("Info",
+                  f"[DEBUG] {len(resultados)} registros guardados en pruebas.db (CruzVerde)",
+                  task_name, in_config)
+
         ruta_debug = _PROJECT_ROOT / "debug"
         ruta_debug.mkdir(exist_ok=True)
         sello      = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -524,6 +556,7 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template,
         pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
         print(f"\n  Reporte debug: {ruta_excel}")
+    conn_sq.close()
 
 
 def _generar_reportes(in_config, esquema, tabla_ex, task_name):

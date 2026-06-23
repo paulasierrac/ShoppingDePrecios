@@ -30,7 +30,7 @@ import pandas as pd
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
-from Funciones.utils import write_log, conectar_bd, excel_a_csv, enviar_correo
+from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, excel_a_csv, enviar_correo
 
 
 def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
@@ -55,6 +55,10 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
             in_config.get("RutaInsumos", ""),
             in_config.get("ArchivoInsumo", "")
         )
+        # En debug: usar Insumo/ local del proyecto (evita rutas de red)
+        if in_config.get("_debug"):
+            _nombre_ins = in_config.get("ArchivoInsumo", "InsumoPricing.xlsx")
+            ruta_insumo = str(Path(__file__).resolve().parent.parent.parent / "Insumo" / _nombre_ins)
 
         # ----------------------------------------------------------------
         # PASO 2: Verificar existencia del archivo
@@ -112,6 +116,11 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         ruta_red    = in_config.get("RutaRed", "")
         carpeta_tmp = in_config.get("CarpetaTemp", "")
         ruta_csv    = os.path.join(ruta_red, carpeta_tmp, "Insumo.csv")
+        # En debug: CSV temporal en carpeta local debug/temp/
+        if in_config.get("_debug"):
+            _dir_tmp = Path(__file__).resolve().parent.parent.parent / "debug" / "temp"
+            _dir_tmp.mkdir(parents=True, exist_ok=True)
+            ruta_csv = str(_dir_tmp / "Insumo.csv")
 
         if os.path.isfile(ruta_csv):
             os.remove(ruta_csv)
@@ -131,101 +140,133 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 5: Cargar CSV a Base de Datos
         # ----------------------------------------------------------------
-        conn   = conectar_bd(in_config)
-        cursor = conn.cursor()
-        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_insumo = in_config.get("TablaTicketInsumo", "TicketInsumo")
+        maquina = socket.gethostname()
 
-        # Crear tabla temporal
-        cursor.execute("""
-            IF OBJECT_ID('tempdb.dbo.#TicketInsumo', 'U') IS NOT NULL
-                DROP TABLE #TicketInsumo;
-            CREATE TABLE #TicketInsumo(
-                [PLU]         [varchar](100),
-                [EAN]         [varchar](100),
-                [Descripcion] [varchar](200),
-                [Proveedor]   [varchar](100),
-                [Categoria]   [varchar](100)
-            )
-        """)
-
-        # Intentar BULK INSERT (requiere que el servidor SQL tenga acceso a la ruta del CSV)
-        bulk_ok = False
-        try:
-            cursor.execute(f"""
-                BULK INSERT #TicketInsumo
-                FROM '{ruta_csv}'
-                WITH (
-                    FORMAT       = 'CSV',
-                    FIRSTROW     = 2,
-                    FIELDTERMINATOR = ';',
-                    ROWTERMINATOR   = '\\n',
-                    CODEPAGE        = 'ACP'
-                )
-            """)
-            bulk_ok = True
-            write_log("Info", "HU01: BULK INSERT ejecutado", task_name, in_config)
-        except Exception as bulk_err:
-            write_log(
-                "Info",
-                f"HU01: BULK INSERT no disponible ({bulk_err}), cargando fila a fila",
-                task_name, in_config
-            )
-
-        if not bulk_ok:
+        if in_config.get("_debug"):
+            # DEBUG: insertar en SQLite (pruebas.db) en lugar de SQL Server
             df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
             df_insumo = df_insumo.fillna("")
+            # Filtrar EAN invalidos
+            mask_ean = df_insumo.iloc[:, 1].str.match(r"^\d+$", na=False)
+            df_insumo = df_insumo[mask_ean]
+
+            conn_sq = conectar_bd_debug()
+            cur_sq  = conn_sq.cursor()
+            # Limpiar tabla para que cada ejecucion debug empiece limpia
+            cur_sq.execute("DELETE FROM TicketInsumo")
+            ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             for _, row in df_insumo.iterrows():
-                # acceso posicional: PLU(0), EAN(1), Descripcion(2), Proveedor(3), Categoria(4)
                 vals = [str(v) for v in row.iloc[:5]]
                 while len(vals) < 5:
                     vals.append("")
-                cursor.execute(
-                    "INSERT INTO #TicketInsumo VALUES (?,?,?,?,?)", vals
+                cur_sq.execute(
+                    "INSERT INTO TicketInsumo "
+                    "(FechaInicio, FechaModificacion, Estado, Observaciones, Maquina, "
+                    " PLU, EAN, Descripcion, Proveedor, Categoria) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (ahora, ahora, 1, "", maquina,
+                     vals[0], vals[1], vals[2], vals[3], vals[4])
+                )
+            conn_sq.commit()
+            conn_sq.close()
+            write_log("Info",
+                      f"HU01: [DEBUG] {len(df_insumo)} registros cargados en pruebas.db (TicketInsumo)",
+                      task_name, in_config)
+        else:
+            # PRODUCCION: SQL Server
+            conn   = conectar_bd(in_config)
+            cursor = conn.cursor()
+            esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
+            tabla_insumo = in_config.get("TablaTicketInsumo", "TicketInsumo")
+
+            cursor.execute("""
+                IF OBJECT_ID('tempdb.dbo.#TicketInsumo', 'U') IS NOT NULL
+                    DROP TABLE #TicketInsumo;
+                CREATE TABLE #TicketInsumo(
+                    [PLU]         [varchar](100),
+                    [EAN]         [varchar](100),
+                    [Descripcion] [varchar](200),
+                    [Proveedor]   [varchar](100),
+                    [Categoria]   [varchar](100)
+                )
+            """)
+
+            bulk_ok = False
+            try:
+                cursor.execute(f"""
+                    BULK INSERT #TicketInsumo
+                    FROM '{ruta_csv}'
+                    WITH (
+                        FORMAT       = 'CSV',
+                        FIRSTROW     = 2,
+                        FIELDTERMINATOR = ';',
+                        ROWTERMINATOR   = '\\n',
+                        CODEPAGE        = 'ACP'
+                    )
+                """)
+                bulk_ok = True
+                write_log("Info", "HU01: BULK INSERT ejecutado", task_name, in_config)
+            except Exception as bulk_err:
+                write_log(
+                    "Info",
+                    f"HU01: BULK INSERT no disponible ({bulk_err}), cargando fila a fila",
+                    task_name, in_config
                 )
 
-        # Depurar EAN invalidos (nulos o con caracteres no numericos)
-        cursor.execute("""
-            DELETE FROM #TicketInsumo
-            WHERE EAN IS NULL
-               OR EAN LIKE ''
-               OR EAN LIKE '%[^0-9]%'
-        """)
+            if not bulk_ok:
+                df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
+                df_insumo = df_insumo.fillna("")
+                for _, row in df_insumo.iterrows():
+                    vals = [str(v) for v in row.iloc[:5]]
+                    while len(vals) < 5:
+                        vals.append("")
+                    cursor.execute("INSERT INTO #TicketInsumo VALUES (?,?,?,?,?)", vals)
 
-        # Insertar en tabla definitiva
-        maquina = socket.gethostname()
-        cursor.execute(f"""
-            INSERT INTO {esquema}.{tabla_insumo}
-                ([FechaInicio],[FechaModificacion],[Estado],[Observaciones],[Maquina],
-                 [PLU],[EAN],[Descripcion],[Proveedor],[Categoria])
-            SELECT
-                GETDATE(), GETDATE(), '1', '', '{maquina}',
-                PLU, EAN, Descripcion, Proveedor, Categoria
-            FROM #TicketInsumo
-        """)
+            cursor.execute("""
+                DELETE FROM #TicketInsumo
+                WHERE EAN IS NULL
+                   OR EAN LIKE ''
+                   OR EAN LIKE '%[^0-9]%'
+            """)
 
-        conn.commit()
-        conn.close()
-        write_log("Info", "HU01: Insumo cargado exitosamente a BD", task_name, in_config)
+            cursor.execute(f"""
+                INSERT INTO {esquema}.{tabla_insumo}
+                    ([FechaInicio],[FechaModificacion],[Estado],[Observaciones],[Maquina],
+                     [PLU],[EAN],[Descripcion],[Proveedor],[Categoria])
+                SELECT
+                    GETDATE(), GETDATE(), '1', '', '{maquina}',
+                    PLU, EAN, Descripcion, Proveedor, Categoria
+                FROM #TicketInsumo
+            """)
+
+            conn.commit()
+            conn.close()
+            write_log("Info", "HU01: Insumo cargado exitosamente a BD", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 6: Mover archivo a carpeta Procesados y eliminar original
         # ----------------------------------------------------------------
-        ruta_insumos    = in_config.get("RutaInsumos", "")
-        carpeta_proc    = in_config.get("CarpetaProcesados", "Procesados\\")
-        ruta_procesados = os.path.join(ruta_insumos, carpeta_proc)
-        os.makedirs(ruta_procesados, exist_ok=True)
+        if in_config.get("_debug"):
+            # En debug no se mueve el archivo (permite re-ejecutar sin regenerar insumo)
+            write_log("Info",
+                      "HU01: [DEBUG] Archivo insumo no movido (modo debug — reutilizable)",
+                      task_name, in_config)
+        else:
+            ruta_insumos    = in_config.get("RutaInsumos", "")
+            carpeta_proc    = in_config.get("CarpetaProcesados", "Procesados\\")
+            ruta_procesados = os.path.join(ruta_insumos, carpeta_proc)
+            os.makedirs(ruta_procesados, exist_ok=True)
 
-        now = datetime.now()
-        nombre_destino = (
-            f"InsumoPricing_{now.year}_{now.month:02d}_{now.day:02d}"
-            f"_{now.hour:02d}_{now.minute:02d}_{now.second:02d}.xlsx"
-        )
-        ruta_destino = os.path.join(ruta_procesados, nombre_destino)
-        shutil.copy2(ruta_insumo, ruta_destino)
+            now = datetime.now()
+            nombre_destino = (
+                f"InsumoPricing_{now.year}_{now.month:02d}_{now.day:02d}"
+                f"_{now.hour:02d}_{now.minute:02d}_{now.second:02d}.xlsx"
+            )
+            ruta_destino = os.path.join(ruta_procesados, nombre_destino)
+            shutil.copy2(ruta_insumo, ruta_destino)
 
-        time.sleep(1)
-        os.remove(ruta_insumo)
+            time.sleep(1)
+            os.remove(ruta_insumo)
 
         out_system_exception = ""
         write_log("Info", "Finaliza HU01", task_name, in_config)

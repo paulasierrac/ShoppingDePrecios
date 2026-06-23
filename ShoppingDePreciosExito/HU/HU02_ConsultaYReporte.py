@@ -58,7 +58,7 @@ from selenium.common.exceptions import WebDriverException
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
-from Funciones.utils import write_log, conectar_bd, csv_a_excel, enviar_correo
+from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, csv_a_excel, enviar_correo
 
 
 # ============================================================
@@ -329,27 +329,36 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         maquina      = socket.gethostname()
 
         # ----------------------------------------------------------------
-        # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
+        # PASO 1 + PASO 2: Verificar registros (debug → SQLite / normal → SQL Server)
         # ----------------------------------------------------------------
-        conn   = conectar_bd(in_config)
-        cursor = conn.cursor()
-
-        cursor.execute(f"""
-            SELECT a.Id
-            FROM {esquema}.{tabla_ins} a
-            LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
-            WHERE b.Id IS NULL AND a.Estado='1'
-        """)
-        hay_nuevos = cursor.fetchone() is not None
-
-        if hay_nuevos:
-            if debug:
-                write_log(
-                    "Info",
-                    f"[DEBUG] Hay nuevos registros para insertar en ({tabla_ex}) — omitido en modo debug",
-                    task_name, in_config
-                )
+        if debug:
+            # En debug: todo contra pruebas.db — no tocar SQL Server
+            conn_sq = conectar_bd_debug()
+            cur_sq  = conn_sq.cursor()
+            cur_sq.execute("SELECT COUNT(*) FROM TicketInsumo WHERE Estado=1")
+            cnt = cur_sq.fetchone()[0] or 0
+            conn_sq.close()
+            hay_pendientes = cnt > 0
+            if hay_pendientes:
+                write_log("Info",
+                          f"[DEBUG] {cnt} registros en pruebas.db TicketInsumo con Estado=1",
+                          task_name, in_config)
             else:
+                write_log("Info",
+                          "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1",
+                          task_name, in_config)
+        else:
+            conn   = conectar_bd(in_config)
+            cursor = conn.cursor()
+
+            # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
+            cursor.execute(f"""
+                SELECT a.Id
+                FROM {esquema}.{tabla_ins} a
+                LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
+                WHERE b.Id IS NULL AND a.Estado='1'
+            """)
+            if cursor.fetchone() is not None:
                 cursor.execute(f"""
                     INSERT INTO {esquema}.{tabla_ex}
                         ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
@@ -365,29 +374,18 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                     WHERE b.Id IS NULL AND a.Estado='1'
                 """)
-                write_log(
-                    "Info",
-                    f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_ex})",
-                    task_name, in_config
-                )
+                write_log("Info",
+                          f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_ex})",
+                          task_name, in_config)
 
-        # ----------------------------------------------------------------
-        # PASO 2: Verificar si hay registros pendientes
-        # ----------------------------------------------------------------
-        if debug:
-            # En debug leemos de TicketInsumo (la tabla de origen)
-            cursor.execute(f"""
-                SELECT TOP(1) 1 FROM {esquema}.{tabla_ins} WHERE Estado='1'
-            """)
-        else:
+            # PASO 2: Verificar si hay registros pendientes
             cursor.execute(f"""
                 SELECT TOP(1) 1 FROM {esquema}.{tabla_ex}
                 WHERE Estado='1' OR Estado='2' OR Estado='99'
             """)
-        hay_pendientes = cursor.fetchone() is not None
-
-        conn.commit()
-        conn.close()
+            hay_pendientes = cursor.fetchone() is not None
+            conn.commit()
+            conn.close()
 
         if not hay_pendientes:
             write_log("Info", "HU02: No existen registros para consultar en pagina", task_name, in_config)
@@ -629,33 +627,23 @@ def _ejecutar_scraping_debug(in_config, esquema, tabla_ins,
                               url_template, ruta_screenshots,
                               headless, task_name):
     """
-    Lee EANs directamente de TicketInsumo, hace el scraping y muestra
-    resultados en consola. No escribe nada en BD. Genera Excel en ./debug/.
+    Lee EANs de pruebas.db (TicketInsumo), hace el scraping, escribe
+    resultados en pruebas.db (Exito) y genera Excel en ./debug/.
+    No toca SQL Server.
     """
     lote_debug = int(in_config.get("LoteDebug", "3"))
 
-    conn   = conectar_bd(in_config)
-    cursor = conn.cursor()
-    cursor.execute(f"""
-        SELECT TOP({lote_debug})
-            [Id], [EAN],
-            LEFT(
-                LTRIM(SUBSTRING(Descripcion,
-                    PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
-                CHARINDEX(' ',
-                    LTRIM(SUBSTRING(Descripcion,
-                        PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
-                    + ' ') - 1
-            ),
-            [Descripcion]
-        FROM {esquema}.{tabla_ins}
-        WHERE Estado='1'
-    """)
-    registros = cursor.fetchall()
-    conn.close()
+    conn_sq = conectar_bd_debug()
+    cur_sq  = conn_sq.cursor()
+    cur_sq.execute(
+        "SELECT Id, EAN, Descripcion FROM TicketInsumo WHERE Estado=1 LIMIT ?",
+        (lote_debug,)
+    )
+    registros = cur_sq.fetchall()
 
     if not registros:
-        write_log("Info", "[DEBUG] No hay registros en TicketInsumo con Estado='1'", task_name, in_config)
+        write_log("Info", "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1", task_name, in_config)
+        conn_sq.close()
         return
 
     write_log("Info", f"[DEBUG] Procesando {len(registros)} EAN(s) (LoteDebug={lote_debug})", task_name, in_config)
@@ -668,10 +656,13 @@ def _ejecutar_scraping_debug(in_config, esquema, tabla_ins,
 
     try:
         for row in registros:
-            id_ticket     = str(row[0])
-            ean           = str(row[1])
-            palabra_clave = str(row[2] or "")
-            descripcion   = str(row[3] or "")
+            id_ticket   = str(row[0])
+            ean         = str(row[1])
+            descripcion = str(row[2] or "")
+            # Extraer primera palabra de 3+ letras como clave de validacion
+            import re as _re
+            m = _re.search(r'[a-zA-Z]{3,}', descripcion)
+            palabra_clave = m.group(0) if m else ""
             ruta_ss       = os.path.join(ruta_screenshots, f"{ean}_{id_ticket}.jpg")
 
             write_log(
@@ -733,6 +724,33 @@ def _ejecutar_scraping_debug(in_config, esquema, tabla_ins,
             driver.quit()
         except Exception:
             pass
+
+    # Guardar resultados en pruebas.db (tabla Exito)
+    if resultados:
+        ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        maquina = socket.gethostname()
+        cur_sq.execute("DELETE FROM Exito")  # limpiar runs anteriores de debug
+        for r in resultados:
+            cur_sq.execute(
+                "INSERT INTO Exito "
+                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
+                " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
+                " BannerProducto, UrlProducto, RutaImagen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (ahora, ahora, ahora,
+                 r["Estado"], r["Observaciones"], 0, maquina,
+                 "", r["EAN"], r["Descripcion"], "", ahora,
+                 r["MarcaProducto"], r["NombrePrd"], "",
+                 r["PrecioUnitario"], r["PrecioConDescuento"], r["PrecioSinDescuento"],
+                 r["Porc.Descuento"], r["PrecioFidelizacion"],
+                 r["BannerProducto"], r["UrlProducto"], r["RutaImagen"])
+            )
+        conn_sq.commit()
+        write_log("Info",
+                  f"[DEBUG] {len(resultados)} registros guardados en pruebas.db (Exito)",
+                  task_name, in_config)
+    conn_sq.close()
 
     # Generar Excel de debug
     _generar_reporte_debug(in_config, resultados, task_name)

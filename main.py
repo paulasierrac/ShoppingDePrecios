@@ -1,7 +1,7 @@
 """
 ================================================================================
 Main Orquestador - Shopping de Precios (todas las farmacias)
-Autor: Paula Sierra (NetApplications)
+Autor: KPMG Advisory, Tax & Legal SAS
 Descripcion: Ejecuta el main.py de cada farmacia de forma consecutiva.
              Un fallo en una farmacia se registra pero NO detiene las demas.
 Propiedad de Colsubsidio
