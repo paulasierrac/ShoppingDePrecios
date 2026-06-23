@@ -21,6 +21,7 @@ import socket
 import getpass
 import smtplib
 import shutil
+import sqlite3
 import pyodbc
 import pandas as pd
 from datetime import datetime
@@ -76,6 +77,14 @@ def obtener_config() -> dict:
         },
         "Scheme": f"[{schema}]",
     }
+
+
+def conectar_bd_debug() -> sqlite3.Connection:
+    """Retorna conexion sqlite3 a pruebas.db (modo debug, sin escrituras en SQL Server)."""
+    ruta_db = Path(__file__).resolve().parent.parent / "pruebas.db"
+    conn = sqlite3.connect(str(ruta_db))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def conectar_bd(config: dict) -> pyodbc.Connection:
