@@ -22,13 +22,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 from Funciones.utils import write_log, obtener_config, conectar_bd
 
-# ── Constantes propias de Locatel ────────────────────────────────────────────
-_TABLA_FARMACIA   = "Locatel"         # nombre de la tabla de resultados en BD
-_KEY_URL          = "UrlLocatel"      # clave del parametro URL en [Parametros]
-_KEY_LOTE         = "PLUsPorBloque_Locatel"  # clave del tamanio de lote
-_NOMBRE_INICIATIVA = "Shopping de Precios Locatel"
-_DROGUERIA         = "Locatel"
-
 
 def hu00_despliegue_ambiental() -> tuple:
     """
@@ -76,39 +69,31 @@ def hu00_despliegue_ambiental() -> tuple:
         write_log("Info", "HU00: Se cargaron los parametros desde BD", task_name, out_config)
 
         # ----------------------------------------------------------------
-        # PASO 3: Parametros de ejecucion
+        # PASO 3: Defaults de seguridad — solo aplican si BD no tiene el parametro
         # ----------------------------------------------------------------
-        # Constantes propias de Locatel (no vienen de BD)
-        out_config["TablaLocatel"]            = _TABLA_FARMACIA
-        out_config["NombreIniciativaLocatel"] = _NOMBRE_INICIATIVA
-        out_config["DrogueriaLocatel"]        = _DROGUERIA
-        out_config["LoteLocatel"]             = out_config.get(_KEY_LOTE, "50")
-        out_config["TablaParametros"]         = tabla_params
+        out_config["TablaParametros"] = tabla_params  # constante de arranque
 
-        # Valores configurables — BD tiene prioridad; defaults solo como respaldo
-        out_config.setdefault("ArchivoInsumo",       out_config.get("Archivo2", "InsumoPricing.xlsx"))
-        out_config.setdefault("ArchivoEnvioCorreos", out_config.get("Correos",  "EnvioCorreos.xlsx"))
-        out_config.setdefault("SheetTicketInsumo",   "TicketInsumo")
-        out_config.setdefault("SheetEnvioCorreos",   "EnvioCorreos")
-        out_config.setdefault("TablaTicketInsumo",   "[TicketInsumo]")
-        out_config.setdefault("TablaEnvioCorreos",   "EnvioCorreos")
-        out_config.setdefault("CodigoRobot",         out_config.get("NombreBot", "SPIDER"))
-        out_config.setdefault("ActivarLog",          "true")
-
-        # URL de busqueda para Locatel (base + patron de busqueda VTEX)
-        url_base = out_config.get(_KEY_URL, "https://www.locatelcolombia.com/").rstrip("/")
-        out_config["UrlLocatel"] = f"{url_base}/REEMPLAZAR?_q=REEMPLAZAR&map=ft"
-
-        # Parametros de limpieza y reintentos con valores por defecto
+        out_config.setdefault("NombreIniciativaLocatel", "Shopping de precios Locatel")
+        out_config.setdefault("DrogueriaLocatel",        "LOCATEL")
+        out_config.setdefault("TablaLocatel",            "[Locatel]")
+        out_config.setdefault("LoteLocatel",             "50")
+        out_config.setdefault("ArchivoInsumo",           "InsumoPricing.xlsx")
+        out_config.setdefault("ArchivoEnvioCorreos",     "EnvioCorreos.xlsx")
+        out_config.setdefault("SheetTicketInsumo",       "TicketInsumo")
+        out_config.setdefault("SheetEnvioCorreos",       "EnvioCorreos")
+        out_config.setdefault("TablaTicketInsumo",       "[TicketInsumo]")
+        out_config.setdefault("TablaEnvioCorreos",       "[EnvioCorreos]")
+        out_config.setdefault("CodigoRobot",             "SPIDER")
+        out_config.setdefault("ActivarLog",              "True")
         out_config.setdefault("ReintentosHu",              "3")
-        out_config.setdefault("ReintentosReprocesamiento", "3")
+        out_config.setdefault("ReintentosReprocesamiento", "0")
         out_config.setdefault("DiasCaidaDb",               "365")
         out_config.setdefault("MeseslimpiezaLog",           "12")
-        out_config.setdefault("MesesLimpiezaScreenshots",  "3")
-        out_config.setdefault("MesesLimpiezaReportes",     "6")
-        out_config.setdefault("MesesLimpiezaInsumos",      "6")
-        out_config.setdefault("NombreResultado",     "ReportePricingLOCATEL_")
-        out_config.setdefault("NombreHojaResultado", "ReportePricingLOCATEL")
+        out_config.setdefault("MesesLimpiezaScreenshots",  "12")
+        out_config.setdefault("MesesLimpiezaReportes",     "12")
+        out_config.setdefault("MesesLimpiezaInsumos",      "12")
+        out_config.setdefault("NombreResultado",           "ReportePricing")
+        out_config.setdefault("NombreHojaResultado",       "ReportePricingLOCATEL")
 
         # ----------------------------------------------------------------
         # PASO 4: Validacion de carpetas (crear si no existen)
@@ -208,7 +193,7 @@ def hu00_despliegue_ambiental() -> tuple:
             f"WHERE FechaInicio < DATEADD(DAY, -{dias_caida}, GETDATE())"
         )
         cursor.execute(
-            f"DELETE FROM {esquema}.[{_TABLA_FARMACIA}] "
+            f"DELETE FROM {esquema}.{out_config.get('TablaLocatel', '[Locatel]')} "
             f"WHERE FechaInicio < DATEADD(DAY, -{dias_caida}, GETDATE())"
         )
         cursor.execute(
