@@ -305,21 +305,21 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ── Cargar selectores desde BD ────────────────────────────────────
         selectores = _cargar_selectores(in_config, task_name)
 
-        # ── PASO 1 + PASO 2: Verificar registros (debug → SQLite / normal → SQL Server) ──
+        # ── PASO 1 + PASO 2: Verificar registros (debug → BD Dev / normal → SQL Server) ──
         if debug:
-            conn_sq = conectar_bd_debug()
+            conn_sq = conectar_bd_debug(in_config)
             cur_sq  = conn_sq.cursor()
-            cur_sq.execute("SELECT COUNT(*) FROM TicketInsumo WHERE Estado=1")
+            cur_sq.execute(f"SELECT COUNT(*) FROM {esquema}.{tabla_ins} WHERE Estado=1")
             cnt = cur_sq.fetchone()[0] or 0
             conn_sq.close()
             hay_pendientes = cnt > 0
             if hay_pendientes:
                 write_log("Info",
-                          f"[DEBUG] {cnt} registros en pruebas.db TicketInsumo con Estado=1",
+                          f"[DEBUG] {cnt} registros en BD Dev ({tabla_ins}) con Estado=1",
                           task_name, in_config)
             else:
                 write_log("Info",
-                          "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1",
+                          f"[DEBUG] No hay registros en BD Dev ({tabla_ins}) con Estado=1",
                           task_name, in_config)
         else:
             conn   = conectar_bd(in_config)
@@ -525,10 +525,10 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template, selectores,
                     ruta_ss_base, task_name):
     """Lee de pruebas.db, hace scraping, escribe en pruebas.db (Farmatodo) y genera Excel."""
     lote_debug = int(in_config.get("LoteDebug", "3"))
-    conn_sq = conectar_bd_debug()
+    conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
     cur_sq.execute(
-        "SELECT Id, EAN, Descripcion FROM TicketInsumo WHERE Estado=1 LIMIT ?",
+        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
         (lote_debug,)
     )
     registros = cur_sq.fetchall()
@@ -563,10 +563,10 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template, selectores,
     if resultados:
         ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         maquina = socket.gethostname()
-        cur_sq.execute("DELETE FROM Farmatodo")
+        cur_sq.execute(f"DELETE FROM {esquema}.Farmatodo")
         for r in resultados:
             cur_sq.execute(
-                "INSERT INTO Farmatodo "
+                f"INSERT INTO {esquema}.Farmatodo "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
@@ -584,7 +584,7 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template, selectores,
             )
         conn_sq.commit()
         write_log("Info",
-                  f"[DEBUG] {len(resultados)} registros guardados en pruebas.db (Farmatodo)",
+                  f"[DEBUG] {len(resultados)} registros guardados en BD Dev ({esquema}.Farmatodo)",
                   task_name, in_config)
 
         ruta_debug = _PROJECT_ROOT / "debug"

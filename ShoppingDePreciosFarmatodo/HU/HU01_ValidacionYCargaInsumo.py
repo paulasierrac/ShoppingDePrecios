@@ -140,27 +140,29 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 5: Cargar CSV a Base de Datos
         # ----------------------------------------------------------------
-        maquina = socket.gethostname()
+        maquina      = socket.gethostname()
+        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
+        tabla_insumo = in_config.get("TablaTicketInsumo", "TicketInsumo")
 
         if in_config.get("_debug"):
-            # DEBUG: insertar en SQLite (pruebas.db) en lugar de SQL Server
+            # DEBUG: insertar en BD Dev (SQL Server) en lugar de pruebas.db
             df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
             df_insumo = df_insumo.fillna("")
             # Filtrar EAN invalidos
             mask_ean = df_insumo.iloc[:, 1].str.match(r"^\d+$", na=False)
             df_insumo = df_insumo[mask_ean]
 
-            conn_sq = conectar_bd_debug()
+            conn_sq = conectar_bd_debug(in_config)
             cur_sq  = conn_sq.cursor()
             # Limpiar tabla para que cada ejecucion debug empiece limpia
-            cur_sq.execute("DELETE FROM TicketInsumo")
+            cur_sq.execute(f"DELETE FROM {esquema}.{tabla_insumo}")
             ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             for _, row in df_insumo.iterrows():
                 vals = [str(v) for v in row.iloc[:5]]
                 while len(vals) < 5:
                     vals.append("")
                 cur_sq.execute(
-                    "INSERT INTO TicketInsumo "
+                    f"INSERT INTO {esquema}.{tabla_insumo} "
                     "(FechaInicio, FechaModificacion, Estado, Observaciones, Maquina, "
                     " PLU, EAN, Descripcion, Proveedor, Categoria) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -170,14 +172,12 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
             conn_sq.commit()
             conn_sq.close()
             write_log("Info",
-                      f"HU01: [DEBUG] {len(df_insumo)} registros cargados en pruebas.db (TicketInsumo)",
+                      f"HU01: [DEBUG] {len(df_insumo)} registros cargados en BD Dev ({tabla_insumo})",
                       task_name, in_config)
         else:
             # PRODUCCION: SQL Server
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
-            esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-            tabla_insumo = in_config.get("TablaTicketInsumo", "TicketInsumo")
 
             cursor.execute("""
                 IF OBJECT_ID('tempdb.dbo.#TicketInsumo', 'U') IS NOT NULL
