@@ -189,36 +189,14 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
                 )
             """)
 
-            bulk_ok = False
-            try:
-                cursor.execute(f"""
-                    BULK INSERT #TicketInsumo
-                    FROM '{ruta_csv}'
-                    WITH (
-                        FORMAT       = 'CSV',
-                        FIRSTROW     = 2,
-                        FIELDTERMINATOR = ';',
-                        ROWTERMINATOR   = '\\n',
-                        CODEPAGE        = 'ACP'
-                    )
-                """)
-                bulk_ok = True
-                write_log("Info", "HU01: BULK INSERT ejecutado", task_name, in_config)
-            except Exception as bulk_err:
-                write_log(
-                    "Info",
-                    f"HU01: BULK INSERT no disponible ({bulk_err}), cargando fila a fila",
-                    task_name, in_config
-                )
-
-            if not bulk_ok:
-                df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
-                df_insumo = df_insumo.fillna("")
-                for _, row in df_insumo.iterrows():
-                    vals = [str(v) for v in row.iloc[:5]]
-                    while len(vals) < 5:
-                        vals.append("")
-                    cursor.execute("INSERT INTO #TicketInsumo VALUES (?,?,?,?,?)", vals)
+            df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
+            df_insumo = df_insumo.fillna("")
+            for _, row in df_insumo.iterrows():
+                vals = [str(v) for v in row.iloc[:5]]
+                while len(vals) < 5:
+                    vals.append("")
+                cursor.execute("INSERT INTO #TicketInsumo VALUES (?,?,?,?,?)", vals)
+            write_log("Info", "HU01: Insumo cargado en tabla temporal", task_name, in_config)
 
             cursor.execute("""
                 DELETE FROM #TicketInsumo
