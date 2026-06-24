@@ -567,13 +567,13 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template, selectores,
         for r in resultados:
             cur_sq.execute(
                 f"INSERT INTO {esquema}.Farmatodo "
-                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
+                "(FechaInicio, FechaModificacion, FechaFin, Estado, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
                 " BannerProducto, UrlProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
-                 r.get("estado", "99"), r.get("observaciones", ""), 0, maquina,
+                 r.get("estado", "99"), 0, maquina,
                  "", r["EAN"], r["Descripcion"], "", ahora,
                  r.get("marca", ""), r.get("nombre_prd", ""),
                  r.get("registro_invima", ""),

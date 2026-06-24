@@ -732,13 +732,13 @@ def _ejecutar_scraping_debug(in_config, esquema, tabla_ins,
         for r in resultados:
             cur_sq.execute(
                 f"INSERT INTO {esquema}.Exito "
-                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
+                "(FechaInicio, FechaModificacion, FechaFin, Estado, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
                 " BannerProducto, UrlProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
-                 r["Estado"], r["Observaciones"], 0, maquina,
+                 r["Estado"], 0, maquina,
                  "", r["EAN"], r["Descripcion"], "", ahora,
                  r["MarcaProducto"], r["NombrePrd"], "",
                  r["PrecioUnitario"], r["PrecioConDescuento"], r["PrecioSinDescuento"],
