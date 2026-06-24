@@ -368,7 +368,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     SELECT
                         a.[Id], a.[FechaInicio], GETDATE(), '',
                         '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
-                        '','','','','','','','','',''
+                        '','','','','','','','','','',''
                     FROM {esquema}.{tabla_ins} a
                     LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                     WHERE b.Id IS NULL AND a.Estado='1'
