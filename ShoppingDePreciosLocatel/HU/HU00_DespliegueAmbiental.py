@@ -76,25 +76,8 @@ def hu00_despliegue_ambiental() -> tuple:
         write_log("Info", "HU00: Se cargaron los parametros desde BD", task_name, out_config)
 
         # ----------------------------------------------------------------
-        # PASO 3: Derivar rutas de trabajo a partir de los parametros BD
+        # PASO 3: Parametros de ejecucion
         # ----------------------------------------------------------------
-        fserver = out_config.get("fserver", "").rstrip("\\")
-        carpeta_insumos = out_config.get("Insumos", "2. Insumos\\")
-
-        base_insumos = os.path.join(fserver, carpeta_insumos)
-
-        out_config["RutaRed"]          = fserver + "\\"
-        out_config["RutaInsumos"]      = base_insumos
-        out_config["PathLog"]          = out_config.get("UrlLogs", os.path.join(fserver, "Logs\\"))
-        out_config["CarpetaTemp"]      = "Temp\\"
-        out_config["CarpetaAudit"]     = "Audit\\"
-        out_config["CarpetaScreenshots"] = "Screenshots\\"
-        out_config["CarpetaResultados"]  = "Resultados\\"
-        out_config["CarpetaProcesados"]  = "Procesados\\"
-        out_config["CarpetaLocatel"]     = f"{_TABLA_FARMACIA}\\"
-        out_config["RutaReporte"]        = os.path.join(base_insumos, "Resultados\\")
-        out_config["RutaScreenshots"]    = os.path.join(base_insumos, "Audit\\", "Screenshots\\")
-
         # Parametros propios de Locatel
         out_config["TablaLocatel"]          = _TABLA_FARMACIA
         out_config["NombreIniciativaLocatel"] = _NOMBRE_INICIATIVA
@@ -129,11 +112,11 @@ def hu00_despliegue_ambiental() -> tuple:
         # PASO 4: Validacion de carpetas (crear si no existen)
         # ----------------------------------------------------------------
         carpetas = [
-            out_config["RutaInsumos"],
-            out_config["PathLog"],
-            os.path.join(out_config["RutaInsumos"], out_config["CarpetaTemp"]),
-            os.path.join(out_config["RutaInsumos"], out_config["CarpetaResultados"]),
-            out_config["RutaScreenshots"],
+            out_config.get("RutaInsumos", ""),
+            out_config.get("PathLog", ""),
+            out_config.get("RutaTemp", ""),
+            out_config.get("RutaReporte", ""),
+            out_config.get("RutaScreenshots", ""),
         ]
         for carpeta in carpetas:
             if carpeta and not os.path.isdir(carpeta):
@@ -199,7 +182,7 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         meses_ins = int(out_config.get("MesesLimpiezaInsumos", "6"))
         fecha_corte_ins = datetime.now() - relativedelta(months=meses_ins)
-        ruta_proc = os.path.join(out_config["RutaInsumos"], out_config["CarpetaProcesados"])
+        ruta_proc = out_config.get("RutaProcesados", "")
 
         if os.path.isdir(ruta_proc):
             for archivo in Path(ruta_proc).iterdir():

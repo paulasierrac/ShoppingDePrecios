@@ -138,7 +138,7 @@ def hu00_despliegue_ambiental() -> tuple:
 
         meses_ins       = int(out_config.get("MesesLimpiezaInsumos", "12"))
         fecha_corte_ins = datetime.now() - relativedelta(months=meses_ins)
-        ruta_proc       = os.path.join(out_config.get("RutaInsumos", ""), out_config.get("CarpetaProcesados", "Procesados\\"))
+        ruta_proc       = out_config.get("RutaProcesados", "")
         if os.path.isdir(ruta_proc):
             for archivo in Path(ruta_proc).iterdir():
                 if archivo.is_file():

@@ -113,9 +113,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 4: Convertir Excel a CSV temporal
         # ----------------------------------------------------------------
-        ruta_red    = in_config.get("RutaRed", "")
-        carpeta_tmp = in_config.get("CarpetaTemp", "")
-        ruta_csv    = os.path.join(ruta_red, carpeta_tmp, "Insumo.csv")
+        ruta_csv = os.path.join(in_config.get("RutaTemp", ""), "Insumo.csv")
         # En debug: CSV temporal en carpeta local debug/temp/
         if in_config.get("_debug"):
             _dir_tmp = Path(__file__).resolve().parent.parent.parent / "debug" / "temp"
