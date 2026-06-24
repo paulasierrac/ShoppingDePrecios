@@ -368,7 +368,7 @@ def csv_a_excel(
     try:
         write_log("Info", "INICIO CsvToExcel", task_name, in_config)
 
-        df = pd.read_csv(in_path_temporal_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
+        df = pd.read_csv(in_path_temporal_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
         df = df.fillna("")
 
         if in_create_new_excel:
@@ -458,7 +458,7 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
             raise Exception(f"Error convirtiendo Excel a CSV: {err}")
 
         # Cargar datos a BD
-        df = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
+        df = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
         df = df.fillna("")
         # Eliminar filas con CodEmailParameter vacio o nulo
         df = df[df.get("CodEmailParameter", pd.Series(dtype=str)).str.strip() != ""]

@@ -144,7 +144,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
 
         if in_config.get("_debug"):
             # DEBUG: insertar en BD Dev (SQL Server) en lugar de pruebas.db
-            df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
+            df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
             df_insumo = df_insumo.fillna("")
             # Filtrar EAN invalidos
             mask_ean = df_insumo.iloc[:, 1].str.match(r"^\d+$", na=False)
@@ -212,7 +212,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
                 )
 
             if not bulk_ok:
-                df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", errors="replace")
+                df_insumo = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
                 df_insumo = df_insumo.fillna("")
                 for _, row in df_insumo.iterrows():
                     vals = [str(v) for v in row.iloc[:5]]
