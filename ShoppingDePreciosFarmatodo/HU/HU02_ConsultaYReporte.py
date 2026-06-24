@@ -483,7 +483,6 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
     porc_desc    = res["porc_descuento"]
     url_prd      = res["url_producto"].replace("'", "''")
     banner       = res["banner"].replace("'", "''")
-    obs          = res["observaciones"].replace("'", "''")
     ruta_img     = ruta_ss.replace("'", "''")
 
     conn   = conectar_bd(in_config)
