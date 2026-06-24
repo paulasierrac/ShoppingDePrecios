@@ -78,20 +78,22 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 3: Parametros de ejecucion
         # ----------------------------------------------------------------
-        # Parametros propios de Locatel
-        out_config["TablaLocatel"]          = _TABLA_FARMACIA
+        # Constantes propias de Locatel (no vienen de BD)
+        out_config["TablaLocatel"]            = _TABLA_FARMACIA
         out_config["NombreIniciativaLocatel"] = _NOMBRE_INICIATIVA
         out_config["DrogueriaLocatel"]        = _DROGUERIA
-        out_config["LoteLocatel"]  = out_config.get(_KEY_LOTE, "50")
-        out_config["ArchivoInsumo"] = out_config.get("Archivo2", "InsumoPricing.xlsx")
-        out_config["ArchivoEnvioCorreos"] = out_config.get("Correos", "Envío Correos.xlsx")
-        out_config["SheetTicketInsumo"]   = "TicketInsumo"
-        out_config["SheetEnvioCorreos"]   = "EnvioCorreos"
-        out_config["TablaTicketInsumo"]   = "[TicketInsumo]"
-        out_config["TablaEnvioCorreos"]   = "EnvioCorreos"
-        out_config["TablaParametros"]     = tabla_params
-        out_config["CodigoRobot"]         = out_config.get("NombreBot", "SPIDER")
-        out_config["ActivarLog"]          = "true"
+        out_config["LoteLocatel"]             = out_config.get(_KEY_LOTE, "50")
+        out_config["TablaParametros"]         = tabla_params
+
+        # Valores configurables — BD tiene prioridad; defaults solo como respaldo
+        out_config.setdefault("ArchivoInsumo",       out_config.get("Archivo2", "InsumoPricing.xlsx"))
+        out_config.setdefault("ArchivoEnvioCorreos", out_config.get("Correos",  "EnvioCorreos.xlsx"))
+        out_config.setdefault("SheetTicketInsumo",   "TicketInsumo")
+        out_config.setdefault("SheetEnvioCorreos",   "EnvioCorreos")
+        out_config.setdefault("TablaTicketInsumo",   "[TicketInsumo]")
+        out_config.setdefault("TablaEnvioCorreos",   "EnvioCorreos")
+        out_config.setdefault("CodigoRobot",         out_config.get("NombreBot", "SPIDER"))
+        out_config.setdefault("ActivarLog",          "true")
 
         # URL de busqueda para Locatel (base + patron de busqueda VTEX)
         url_base = out_config.get(_KEY_URL, "https://www.locatelcolombia.com/").rstrip("/")

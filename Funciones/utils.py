@@ -425,11 +425,9 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
     write_log("Info", "Inicia funcion CargarTablaEnvioCorreos", task_name, in_config)
 
     try:
-        # Ruta del archivo de insumo de correos
-        ruta_red = in_config.get("RutaRed", "")
-        carpeta_insumos = in_config.get("CarpetaInsumos", "")
+        # Ruta del archivo de insumo de correos — usa rutas completas desde BD
         archivo_envio_correos = in_config.get("ArchivoEnvioCorreos", "EnvioCorreos.xlsx")
-        ruta_insumo = os.path.join(ruta_red, carpeta_insumos, archivo_envio_correos)
+        ruta_insumo = os.path.join(in_config.get("RutaInsumos", ""), archivo_envio_correos)
 
         if not os.path.isfile(ruta_insumo):
             write_log("Info", f"NO existe el archivo de la ruta ({ruta_insumo})", task_name, in_config)
@@ -439,8 +437,7 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
         write_log("Info", f"Existe el archivo de la ruta ({ruta_insumo})", task_name, in_config)
 
         # Convertir Excel a CSV temporal
-        carpeta_temp = in_config.get("CarpetaTemp", "")
-        ruta_csv = os.path.join(ruta_red, carpeta_temp, "InsumoT.csv")
+        ruta_csv = os.path.join(in_config.get("RutaTemp", ""), "InsumoT.csv")
 
         if os.path.isfile(ruta_csv):
             os.remove(ruta_csv)
