@@ -458,7 +458,8 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
         df = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
         df = df.fillna("")
         # Eliminar filas con CodEmailParameter vacio o nulo
-        df = df[df.get("CodEmailParameter", pd.Series(dtype=str)).str.strip() != ""]
+        if "CodEmailParameter" in df.columns:
+            df = df[df["CodEmailParameter"].str.strip() != ""]
 
         conn = conectar_bd(in_config)
         cursor = conn.cursor()
