@@ -532,7 +532,7 @@ def _scraping_debug(in_config, esquema, tabla_ins, url_template,
                 f"INSERT INTO {esquema}.CruzVerde "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
                 " BannerProducto, UrlProducto, RutaImagen) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,

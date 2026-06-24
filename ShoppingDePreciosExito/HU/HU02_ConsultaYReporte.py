@@ -734,7 +734,7 @@ def _ejecutar_scraping_debug(in_config, esquema, tabla_ins,
                 f"INSERT INTO {esquema}.Exito "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, PrecioFidelizacion, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
                 " BannerProducto, UrlProducto, RutaImagen) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
