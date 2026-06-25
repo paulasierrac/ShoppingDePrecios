@@ -457,6 +457,17 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
         # Cargar datos a BD
         df = pd.read_csv(ruta_csv, sep=";", dtype=str, encoding="cp1252", encoding_errors="replace")
         df = df.fillna("")
+        # Normalizar nombres de columna (soporte para Excel en espanol e ingles)
+        col_map = {
+            "IdCorreo":        "CodEmailParameter",
+            "CorreoPara":      "TOEmailParameter",
+            "CorreoParaCopia": "CCEmailParameter",
+            "CorreoParOculto": "BCCEmailParameter",
+            "Asunto":          "AsuntoEmailParameter",
+            "Contenido":       "BodyEmailParameter",
+            "BooleanHTML":     "IsHTMLEmailParameter",
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         # Eliminar filas con CodEmailParameter vacio o nulo
         if "CodEmailParameter" in df.columns:
             df = df[df["CodEmailParameter"].str.strip() != ""]

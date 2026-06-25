@@ -333,6 +333,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         hay_nuevos = cursor.fetchone() is not None
 
         if hay_nuevos:
+            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} ON")
             cursor.execute(f"""
                 INSERT INTO {esquema}.{tabla_loc}
                     ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
@@ -351,6 +352,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
                 WHERE b.Id IS NULL AND a.Estado='1'
             """)
+            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} OFF")
             write_log(
                 "Info",
                 f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_loc})",
