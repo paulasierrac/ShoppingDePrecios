@@ -513,9 +513,10 @@ def cargar_tabla_envio_correos(in_config: dict) -> str:
         # INSERT para nuevos codigos
         cursor.execute(f"""
             INSERT INTO {esquema}.{tabla}
-                ([CodEmailParameter],[TOEmailParameter],[CCEmailParameter],
+                ([IdEmailParameter],[CodEmailParameter],[TOEmailParameter],[CCEmailParameter],
                  [BCCEmailParameter],[AsuntoEmailParameter],[BodyEmailParameter],[IsHTMLEmailParameter])
-            SELECT t.[CodEmailParameter],t.[TOEmailParameter],t.[CCEmailParameter],
+            SELECT TRY_CAST(t.[CodEmailParameter] AS INT),
+                   t.[CodEmailParameter],t.[TOEmailParameter],t.[CCEmailParameter],
                    t.[BCCEmailParameter],t.[AsuntoEmailParameter],t.[BodyEmailParameter],
                    TRY_CAST(t.[IsHTMLEmailParameter] AS BIT)
             FROM #Temporal t
