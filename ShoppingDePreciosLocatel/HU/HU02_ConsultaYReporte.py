@@ -405,7 +405,13 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         browser = pw_instance.chromium.launch(
             headless=headless,
             proxy=proxy_cfg,
-            args=["--lang=es-CO"]
+            args=[
+                "--lang=es-CO",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+            ]
         )
 
         hay_mas = True
