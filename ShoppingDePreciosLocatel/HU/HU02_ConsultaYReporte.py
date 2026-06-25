@@ -24,7 +24,7 @@ Flujo principal:
      pero aun no en TablaLocatel.
   3. Verifica que existan registros pendientes; si no, termina.
   4. Crea estructura de carpetas de screenshots (anio/mes/dia).
-  5. Bucle de scraping: procesa lotes de LoteLocatel productos con Selenium
+  5. Bucle de scraping: procesa lotes de LoteLocatel productos con Playwright
      hasta que no queden registros en Estado=1.
   6. Generacion de reporte: por cada FechaInicio con registros procesados
      exporta un Excel y envia el correo de resultado.
@@ -42,12 +42,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import pyodbc
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import WebDriverException
+from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
@@ -55,15 +51,15 @@ from Funciones.utils import write_log, conectar_bd, csv_a_excel, enviar_correo
 
 
 # ============================================================
-# Tiempos de espera (segundos) — equivalentes a cEsperaXs AA
+# Tiempos de espera (milisegundos para Playwright)
 # ============================================================
-ESPERA_3S = 3
-ESPERA_5S = 5
-ESPERA_7S = 7
+ESPERA_3S = 3000
+ESPERA_5S = 5000
+ESPERA_7S = 7000
 
 
 # ============================================================
-# Helpers de Selenium
+# Helpers
 # ============================================================
 
 def _proxy_sistema_windows() -> str:
@@ -83,36 +79,22 @@ def _proxy_sistema_windows() -> str:
     return ""
 
 
-def _crear_driver(headless: bool = True) -> webdriver.Chrome:
-    """Crea y retorna un ChromeDriver configurado."""
-    opts = Options()
-    if headless:
-        opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1920,1080")
-    opts.add_argument("--lang=es-CO")
-    opts.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    )
-    proxy = _proxy_sistema_windows()
-    if proxy:
-        opts.add_argument(f"--proxy-server={proxy}")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    return webdriver.Chrome(options=opts)
-
-
-def _js(driver, script: str, default=""):
-    """Ejecuta JavaScript y retorna el resultado; retorna `default` si falla."""
+def _js(page: Page, script: str, default=""):
+    """Ejecuta JavaScript en la pagina y retorna el resultado."""
     try:
-        result = driver.execute_script(f"return {script}")
+        result = page.evaluate(script)
         return result if result is not None else default
     except Exception:
         return default
+
+
+def _tomar_screenshot(page: Page, ruta: str) -> None:
+    """Toma screenshot de la pagina actual."""
+    try:
+        os.makedirs(os.path.dirname(ruta), exist_ok=True)
+        page.screenshot(path=ruta)
+    except Exception:
+        pass
 
 
 def _extraer_precio_entero(texto: str) -> str:
@@ -125,23 +107,14 @@ def _extraer_precio_entero(texto: str) -> str:
     return re.sub(r"[^\d]", "", texto)
 
 
-def _tomar_screenshot(driver, ruta: str) -> None:
-    """Toma screenshot de la pagina actual y lo guarda en ruta."""
-    try:
-        os.makedirs(os.path.dirname(ruta), exist_ok=True)
-        driver.save_screenshot(ruta)
-    except Exception:
-        pass
-
-
 # ============================================================
 # Logica de scraping por EAN en Locatel
 # ============================================================
 
-def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
+def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
                    ruta_screenshot: str, in_config: dict, task_name: str) -> dict:
     """
-    Abre la URL de busqueda de Locatel para el EAN dado y extrae:
+    Navega a la URL de busqueda de Locatel para el EAN dado y extrae:
       titulo, precio_con_desc, precio_sin_desc, disponibilidad, marca, url_producto
 
     Retorna un dict con esas claves y 'estado' (2, 3 o 99).
@@ -160,14 +133,14 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
     url_consulta = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        driver.get(url_consulta)
-        time.sleep(ESPERA_5S)
+        page.goto(url_consulta, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(ESPERA_5S)
 
         # ── Obtener URL del primer producto en resultados ──────────────
         url_producto = ""
         for _ in range(5):
             url_producto = _js(
-                driver,
+                page,
                 "document.getElementsByClassName("
                 "'vtex-product-summary-2-x-clearLink "
                 "vtex-product-summary-2-x-clearLink--itemList "
@@ -175,34 +148,32 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
             )
             if url_producto:
                 break
-            time.sleep(ESPERA_3S)
+            page.wait_for_timeout(ESPERA_3S)
 
         resultado["url_producto"] = url_producto or url_consulta
 
         # ── Titulo del producto ────────────────────────────────────────
         titulo = _js(
-            driver,
+            page,
             "document.querySelector('.vtex-product-summary-2-x-productBrand')"
             "?.innerText.trim()"
         )
         resultado["titulo"] = titulo or ""
 
-        # Si no hay titulo en la pagina de resultados no hay producto
         if not titulo:
             write_log(
                 "Info",
                 f"HU02: EAN ({ean}) — No existe el producto en la farmacia",
                 task_name, in_config
             )
-            _tomar_screenshot(driver, ruta_screenshot)
-            resultado["estado"]       = "99"
+            _tomar_screenshot(page, ruta_screenshot)
+            resultado["estado"]        = "99"
             resultado["observaciones"] = "No existe el producto en la farmacia"
             return resultado
 
         # ── Precios ───────────────────────────────────────────────────
-        # Precio de venta (con descuento): primer elemento de precio visible
         precio_con_desc_raw = _js(
-            driver,
+            page,
             "[...document.querySelectorAll("
             "'.vtex-product-price-1-x-sellingPriceValue "
             ".vtex-product-summary-2-x-currencyInteger')]"
@@ -210,9 +181,8 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
             "document.querySelector("
             "'.vtex-product-summary-2-x-currencyInteger')?.innerText.trim()"
         )
-        # Precio original (sin descuento): precio de lista si existe
         precio_sin_desc_raw = _js(
-            driver,
+            page,
             "document.querySelector("
             "'.vtex-product-price-1-x-listPriceValue "
             ".vtex-product-summary-2-x-currencyInteger')?.innerText.trim()"
@@ -221,17 +191,16 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
         precio_con_desc = _extraer_precio_entero(str(precio_con_desc_raw or ""))
         precio_sin_desc = _extraer_precio_entero(str(precio_sin_desc_raw or ""))
 
-        # Si no hay precio de lista, el precio de venta ES el precio sin descuento
         if not precio_sin_desc:
             precio_sin_desc = precio_con_desc
-            precio_con_desc = "0"  # sin descuento
+            precio_con_desc = "0"
 
         resultado["precio_con_desc"] = precio_con_desc
         resultado["precio_sin_desc"] = precio_sin_desc
 
         # ── Disponibilidad / Stock ─────────────────────────────────────
         disponibilidad_raw = _js(
-            driver,
+            page,
             "(document.querySelector("
             "'.locatelcolombia-delivery-modal-0-x-buttonNoPdp')"
             "?.innerText.trim()) || 'Texto no encontrado'"
@@ -240,14 +209,13 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
 
         # ── Marca ─────────────────────────────────────────────────────
         marca_raw = _js(
-            driver,
+            page,
             "document.querySelector("
             "'.vtex-product-summary-2-x-brandName')?.innerText.trim()"
         )
         resultado["marca"] = str(marca_raw or "")
 
         # ── Determinar estado del registro ────────────────────────────
-        # Validar que el titulo corresponda a la palabra clave del EAN
         titulo_upper = titulo.upper()
         kw_upper     = (palabra_clave or "").upper().strip()
 
@@ -258,15 +226,14 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
                 f"palabra_clave='{palabra_clave}'",
                 task_name, in_config
             )
-            _tomar_screenshot(driver, ruta_screenshot)
-            resultado["estado"]       = "3"
+            _tomar_screenshot(page, ruta_screenshot)
+            resultado["estado"]        = "3"
             resultado["observaciones"] = (
-                "No existe coincidencia entre la información encontrada "
+                "No existe coincidencia entre la informacion encontrada "
                 "y el producto consultado"
             )
             return resultado
 
-        # Verificar stock
         sin_stock = (
             "no encontrado" not in disponibilidad_raw.lower()
             and disponibilidad_raw.strip() != ""
@@ -278,7 +245,7 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
                 f"HU02: EAN ({ean}) — Encontrado pero sin stock: '{titulo}'",
                 task_name, in_config
             )
-            resultado["estado"]       = "2"
+            resultado["estado"]        = "2"
             resultado["observaciones"] = "Sin stock"
         else:
             write_log(
@@ -287,18 +254,26 @@ def _consultar_ean(driver, ean: str, palabra_clave: str, url_template: str,
                 f"precio={precio_sin_desc}",
                 task_name, in_config
             )
-            resultado["estado"]       = "2"
+            resultado["estado"]        = "2"
             resultado["observaciones"] = ""
 
-        _tomar_screenshot(driver, ruta_screenshot)
+        _tomar_screenshot(page, ruta_screenshot)
 
+    except PlaywrightTimeout:
+        write_log(
+            "Warning",
+            f"HU02: Timeout consultando EAN ({ean})",
+            task_name, in_config
+        )
+        resultado["estado"]        = "99"
+        resultado["observaciones"] = "Timeout al cargar la pagina"
     except Exception as e:
         write_log(
             "Warning",
-            f"HU02: Error consultando EAN ({ean}): {e}",
+            f"HU02: Error consultando EAN ({ean}): {str(e)[:200]}",
             task_name, in_config
         )
-        resultado["estado"]       = "99"
+        resultado["estado"]        = "99"
         resultado["observaciones"] = f"Error: {str(e)[:200]}"
 
     return resultado
@@ -322,12 +297,13 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
     task_name = "HU02_ConsultaYReporte"
     write_log("Info", "Inicia HU02", task_name, in_config)
 
-    driver = None
+    pw_instance = None
+    browser     = None
 
     try:
         esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_loc    = in_config.get("TablaLocatel",     "Locatel")
-        tabla_ins    = in_config.get("TablaTicketInsumo","TicketInsumo")
+        tabla_loc    = in_config.get("TablaLocatel",      "Locatel")
+        tabla_ins    = in_config.get("TablaTicketInsumo", "TicketInsumo")
         url_template = in_config.get("UrlLocatel", "")
         lote         = int(in_config.get("LoteLocatel", "10"))
         reintentos_r = in_config.get("ReintentosReprocesamiento", "3")
@@ -373,7 +349,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     a.[Id], a.[FechaInicio], GETDATE(), '',
                     '1', '', '0', '{maquina}', a.[FechaInicio],
                     a.[PLU], a.[EAN], a.[Descripcion], a.[Categoria],
-                    '','','','','','','','','','','',''
+                    '','','','','','','','','','',''
                 FROM {esquema}.{tabla_ins} a
                 LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
                 WHERE b.Id IS NULL AND a.Estado='1'
@@ -417,10 +393,20 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         os.makedirs(ruta_screenshots, exist_ok=True)
 
         # ----------------------------------------------------------------
-        # PASO 5: Bucle principal de scraping
+        # PASO 5: Bucle principal de scraping con Playwright
         # ----------------------------------------------------------------
-        headless = str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        headless   = str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        proxy_url  = _proxy_sistema_windows()
+        proxy_cfg  = {"server": proxy_url} if proxy_url else None
+
         write_log("Info", "HU02: Inicia consulta de productos por EAN", task_name, in_config)
+
+        pw_instance = sync_playwright().start()
+        browser = pw_instance.chromium.launch(
+            headless=headless,
+            proxy=proxy_cfg,
+            args=["--lang=es-CO"]
+        )
 
         hay_mas = True
         while hay_mas:
@@ -433,7 +419,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
 
-            # Extraer lote de registros pendientes
             cursor.execute(f"""
                 SELECT TOP({lote}) [Id], [EAN],
                     LEFT(
@@ -455,15 +440,22 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 hay_mas = False
                 break
 
-            driver = _crear_driver(headless=headless)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+                locale="es-CO",
+                viewport={"width": 1920, "height": 1080}
+            )
+            page = context.new_page()
 
             for row in registros:
-                id_ticket    = str(row[0])
-                ean          = str(row[1])
+                id_ticket     = str(row[0])
+                ean           = str(row[1])
                 palabra_clave = str(row[2] or "")
-                # plu        = str(row[3])  # disponible si se necesita
 
-                # Actualizar FechaModificacion al iniciar consulta
                 conn   = conectar_bd(in_config)
                 cursor = conn.cursor()
                 cursor.execute(f"""
@@ -474,7 +466,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 conn.commit()
                 conn.close()
 
-                # Ruta del screenshot
                 ruta_ss = os.path.join(
                     ruta_screenshots,
                     f"{ean}_{id_ticket}.jpg"
@@ -487,9 +478,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     task_name, in_config
                 )
 
-                # Consultar EAN en Locatel
                 resultado = _consultar_ean(
-                    driver=driver,
+                    page=page,
                     ean=ean,
                     palabra_clave=palabra_clave,
                     url_template=url_template,
@@ -498,10 +488,9 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     task_name=task_name
                 )
 
-                # Actualizar BD con resultado
                 conn   = conectar_bd(in_config)
                 cursor = conn.cursor()
-                estado       = resultado["estado"]
+                estado        = resultado["estado"]
                 observaciones = resultado["observaciones"][:250].replace("'", "''")
                 titulo        = resultado["titulo"].replace(";", "").replace("'", "''")
                 marca         = resultado["marca"].replace("'", "''")
@@ -551,14 +540,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 conn.commit()
                 conn.close()
 
-            # Cerrar navegador al terminar el lote
-            try:
-                driver.quit()
-            except Exception:
-                pass
-            driver = None
+            context.close()
 
-            # Verificar si quedan registros en Estado=1
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
             cursor.execute(f"""
@@ -583,9 +566,14 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
     finally:
-        if driver:
+        if browser:
             try:
-                driver.quit()
+                browser.close()
+            except Exception:
+                pass
+        if pw_instance:
+            try:
+                pw_instance.stop()
             except Exception:
                 pass
 
@@ -641,7 +629,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
-    # Restaurar estados previos de reporte si los hubiera
     cursor.execute(
         f"UPDATE {esquema}.{tabla_loc} SET [Estado]='2' "
         f"WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'"
@@ -651,7 +638,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         f"WHERE [Estado]='199' AND FechaInicio='{fecha_inicio}'"
     )
 
-    # Estadisticas
     cursor.execute(f"""
         SELECT
             COUNT(*) AS TotalRegistros,
@@ -663,11 +649,11 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         WHERE FechaInicio='{fecha_inicio}'
     """)
     stats = cursor.fetchone()
-    total         = stats[0] if stats else 0
-    extraidos     = stats[1] if stats else 0
-    estado2_count = stats[2] if stats else 0
-    sin_stock     = stats[3] if stats else 0
-    estado99_count= stats[4] if stats else 0
+    total          = stats[0] if stats else 0
+    extraidos      = stats[1] if stats else 0
+    estado2_count  = stats[2] if stats else 0
+    sin_stock      = stats[3] if stats else 0
+    estado99_count = stats[4] if stats else 0
 
     write_log(
         "Info",
@@ -677,7 +663,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         task_name, in_config
     )
 
-    # Marcar como reportados
     cursor.execute(
         f"UPDATE {esquema}.{tabla_loc} SET [Estado]='100' "
         f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
@@ -687,7 +672,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         f"WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'"
     )
 
-    # Ajustar PrecioConDescuento = 0 cuando es igual al PrecioSinDescuento
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
         SET [PrecioConDescuento]='0'
@@ -696,7 +680,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
           AND TRY_CAST(PrecioSinDescuento AS INT) = TRY_CAST(PrecioConDescuento AS INT)
     """)
 
-    # Calcular porcentaje de descuento
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
         SET [Porc.Descuento] =
@@ -710,42 +693,40 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
 
     conn.commit()
 
-    # Consultar datos para el reporte
     cursor.execute(f"""
         SELECT
-            [FechaInicio]       AS fechainsumo,
-            [PLU]               AS plu,
-            [Descripcion]       AS descripcion,
-            [FechaModificacion] AS horaconsulta,
-            [EAN]               AS ean,
-            [Estado]            AS estado,
-            [MarcaProducto]     AS marcaproducto,
-            [NombrePrd]         AS nombreprd,
-            [RegistroInvima]    AS registroinvima,
-            [PrecioUnitario]    AS preciounitario,
-            [PrecioConDescuento]AS preciocondescuento,
-            [PrecioSinDescuento]AS preciosindescuento,
-            [Porc.Descuento]    AS [porc.descuento],
-            [PrecioFidelizacion]AS preciofidelizacion,
-            [BannerProducto]    AS bannerproducto,
-            [UrlProducto]       AS urlproducto,
-            [RutaImagen]        AS rutaimagen
+            [FechaInicio]        AS fechainsumo,
+            [PLU]                AS plu,
+            [Descripcion]        AS descripcion,
+            [FechaModificacion]  AS horaconsulta,
+            [EAN]                AS ean,
+            [Estado]             AS estado,
+            [MarcaProducto]      AS marcaproducto,
+            [NombrePrd]          AS nombreprd,
+            [RegistroInvima]     AS registroinvima,
+            [PrecioUnitario]     AS preciounitario,
+            [PrecioConDescuento] AS preciocondescuento,
+            [PrecioSinDescuento] AS preciosindescuento,
+            [Porc.Descuento]     AS [porc.descuento],
+            [PrecioFidelizacion] AS preciofidelizacion,
+            [BannerProducto]     AS bannerproducto,
+            [UrlProducto]        AS urlproducto,
+            [RutaImagen]         AS rutaimagen
         FROM {esquema}.{tabla_loc}
         WHERE FechaInicio='{fecha_inicio}'
     """)
-    cols   = [col[0] for col in cursor.description]
-    filas  = cursor.fetchall()
+    cols  = [col[0] for col in cursor.description]
+    filas = cursor.fetchall()
     conn.close()
 
     if not filas:
         return
 
-    # Construir DataFrame y exportar a Excel
     df = pd.DataFrame(filas, columns=cols)
 
-    ruta_reporte = in_config.get("RutaReporte", "")
+    ruta_reporte     = in_config.get("RutaReporte", "")
     os.makedirs(ruta_reporte, exist_ok=True)
-    nombre_resultado = in_config.get("NombreResultado", "ReportePricingLOCATEL_")
+    nombre_resultado = in_config.get("NombreResultado",     "ReportePricingLOCATEL_")
     nombre_hoja      = in_config.get("NombreHojaResultado", "ReportePricingLOCATEL")
     nombre_excel     = f"{nombre_resultado}{fecha_sello}.xlsx"
     ruta_excel       = os.path.join(ruta_reporte, nombre_excel)
@@ -759,7 +740,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         task_name, in_config
     )
 
-    # Enviar correo con reporte adjunto (codEmail=100)
     from_address = in_config.get("_correo", {}).get("usuario", "")
     reemplazo = {"$NombrePagina$": in_config.get("DrogueriaLocatel", "Locatel")}
     err = enviar_correo(
@@ -772,7 +752,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         i_attachment=[ruta_excel]
     )
     if err:
-        write_log("Info", f"HU02: No fue posible enviar el correo de notificacion: {err}", task_name, in_config)
+        write_log("Info", f"HU02: No fue posible enviar el correo: {err}", task_name, in_config)
 
 
 if __name__ == "__main__":
