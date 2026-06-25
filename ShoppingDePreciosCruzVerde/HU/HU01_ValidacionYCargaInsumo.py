@@ -205,6 +205,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
                    OR EAN LIKE '%[^0-9]%'
             """)
 
+            cursor.execute(f"DELETE FROM {esquema}.{tabla_insumo}")
             cursor.execute(f"""
                 INSERT INTO {esquema}.{tabla_insumo}
                     ([FechaInicio],[FechaModificacion],[Estado],[Observaciones],[Maquina],
