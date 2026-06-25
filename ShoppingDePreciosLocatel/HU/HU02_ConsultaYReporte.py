@@ -37,6 +37,7 @@ import time
 import socket
 import shutil
 import traceback
+import winreg
 from datetime import datetime
 from pathlib import Path
 
@@ -65,6 +66,23 @@ ESPERA_7S = 7
 # Helpers de Selenium
 # ============================================================
 
+def _proxy_sistema_windows() -> str:
+    """Retorna el proxy configurado en Windows Internet Settings, o '' si no hay."""
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        ) as key:
+            if winreg.QueryValueEx(key, "ProxyEnable")[0]:
+                proxy = winreg.QueryValueEx(key, "ProxyServer")[0]
+                if proxy and "://" not in proxy:
+                    proxy = f"http://{proxy}"
+                return proxy or ""
+    except Exception:
+        pass
+    return ""
+
+
 def _crear_driver(headless: bool = True) -> webdriver.Chrome:
     """Crea y retorna un ChromeDriver configurado."""
     opts = Options()
@@ -80,6 +98,9 @@ def _crear_driver(headless: bool = True) -> webdriver.Chrome:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/122.0.0.0 Safari/537.36"
     )
+    proxy = _proxy_sistema_windows()
+    if proxy:
+        opts.add_argument(f"--proxy-server={proxy}")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
     return webdriver.Chrome(options=opts)
