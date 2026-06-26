@@ -453,7 +453,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     "Chrome/122.0.0.0 Safari/537.36"
                 ),
                 locale="es-CO",
-                viewport={"width": 1920, "height": 1080}
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=True
             )
             page = context.new_page()
 
