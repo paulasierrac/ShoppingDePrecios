@@ -153,7 +153,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
             conn_sq = conectar_bd_debug(in_config)
             cur_sq  = conn_sq.cursor()
             # Limpiar tabla para que cada ejecucion debug empiece limpia
-            cur_sq.execute(f"DELETE FROM {esquema}.{tabla_insumo}")
+            cur_sq.execute(f"TRUNCATE TABLE {esquema}.{tabla_insumo}")
             ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             for _, row in df_insumo.iterrows():
                 vals = [str(v) for v in row.iloc[:5]]
@@ -205,7 +205,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
                    OR EAN LIKE '%[^0-9]%'
             """)
 
-            cursor.execute(f"DELETE FROM {esquema}.{tabla_insumo}")
+            cursor.execute(f"TRUNCATE TABLE {esquema}.{tabla_insumo}")
             cursor.execute(f"""
                 INSERT INTO {esquema}.{tabla_insumo}
                     ([FechaInicio],[FechaModificacion],[Estado],[Observaciones],[Maquina],
