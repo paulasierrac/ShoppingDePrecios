@@ -79,7 +79,7 @@ def main() -> None:
     io_config["_debug"] = _DEBUG
     if _DEBUG:
         io_config["HeadlessChrome"] = "false"
-        print("[DEBUG] Modo desarrollo activo — sin escrituras en BD ni envio de correos")
+        print("[DEBUG] Modo desarrollo activo — sin escrituras en BD")
 
     write_log("Info", "-" * 100, TASK_NAME, io_config)
     write_log(
@@ -107,19 +107,16 @@ def main() -> None:
         p_aux_dic = {"$NombrePagina$": io_config.get("DrogueriaExito", "Exito")}
         from_address = io_config.get("_correo", {}).get("usuario", "")
 
-        if not _DEBUG:
-            err = enviar_correo(
-                in_config=io_config,
-                i_cod_email=0,
-                i_from_address=from_address,
-                i_replace_in_message=p_aux_dic,
-                i_replace_in_subject=p_aux_dic,
-                i_html_format=False
-            )
-            if err:
-                write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
-        else:
-            write_log("Info", "[DEBUG] Correo de inicio omitido", TASK_NAME, io_config)
+        err = enviar_correo(
+            in_config=io_config,
+            i_cod_email=0,
+            i_from_address=from_address,
+            i_replace_in_message=p_aux_dic,
+            i_replace_in_subject=p_aux_dic,
+            i_html_format=False
+        )
+        if err:
+            write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
 
         # ----------------------------------------------------------------
         # PASO 4: Bucle principal (HU01 + HU02) hasta exito o error definitivo
@@ -166,19 +163,16 @@ def main() -> None:
         # ----------------------------------------------------------------
         # PASO 5: Correo de finalizacion exitosa (codEmail=100)
         # ----------------------------------------------------------------
-        if not _DEBUG:
-            err = enviar_correo(
-                in_config=io_config,
-                i_cod_email=100,
-                i_from_address=from_address,
-                i_replace_in_message=p_aux_dic,
-                i_replace_in_subject=p_aux_dic,
-                i_html_format=False
-            )
-            if err:
-                write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
-        else:
-            write_log("Info", "[DEBUG] Correo de finalizacion omitido", TASK_NAME, io_config)
+        err = enviar_correo(
+            in_config=io_config,
+            i_cod_email=100,
+            i_from_address=from_address,
+            i_replace_in_message=p_aux_dic,
+            i_replace_in_subject=p_aux_dic,
+            i_html_format=False
+        )
+        if err:
+            write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
 
         write_log(
             "Info",
@@ -196,19 +190,16 @@ def main() -> None:
             "$Proceso$":      io_config.get("NombreIniciativaExito", ""),
             "$Error$":        p_aux_string or p_system_exception,
         }
-        if not _DEBUG:
-            err = enviar_correo(
-                in_config=io_config,
-                i_cod_email=99,
-                i_from_address=from_address,
-                i_replace_in_message=p_aux_dic_error,
-                i_replace_in_subject=p_aux_dic_error,
-                i_html_format=False
-            )
-            if err:
-                write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
-        else:
-            write_log("Info", "[DEBUG] Correo de error omitido", TASK_NAME, io_config)
+        err = enviar_correo(
+            in_config=io_config,
+            i_cod_email=99,
+            i_from_address=from_address,
+            i_replace_in_message=p_aux_dic_error,
+            i_replace_in_subject=p_aux_dic_error,
+            i_html_format=False
+        )
+        if err:
+            write_log("Info", "No fue posible enviar el correo de notificacion", TASK_NAME, io_config)
 
         write_log(
             "Info",
