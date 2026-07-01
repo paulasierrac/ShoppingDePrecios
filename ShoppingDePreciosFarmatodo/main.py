@@ -2,7 +2,7 @@
 ================================================================================
 Main - Shopping de Precios Farmatodo
 Nombre de la iniciativa: Shopping de Precios Farmatodo
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Farmatodo.
              Equivale al bot Main_ShoppingDePreciosFarmatodo de Automation Anywhere.

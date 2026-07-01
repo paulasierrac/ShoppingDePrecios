@@ -2,7 +2,7 @@
 ================================================================================
 HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Farmatodo
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en farmatodo.com.co por EAN.
              Los selectores CSS se cargan desde [ShoppingDePrecios].[Selectores]
              en SQL Server (Competencia='FARMATODO') en lugar de estar

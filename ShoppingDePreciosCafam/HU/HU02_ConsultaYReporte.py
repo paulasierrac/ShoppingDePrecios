@@ -2,7 +2,7 @@
 ================================================================================
 HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Cafam
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en drogueriascafam.com.co por EAN via JavaScript.
              La busqueda retorna tarjetas de resultado; el bot valida que el URL
              del primer resultado contenga el EAN, navega al detalle y extrae

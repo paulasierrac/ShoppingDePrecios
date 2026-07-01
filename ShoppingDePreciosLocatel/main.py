@@ -2,7 +2,7 @@
 ================================================================================
 Main - Shopping de Precios Locatel
 Nombre de la iniciativa: Shopping de Precios Locatel
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Locatel.
              Equivale al bot Main_ShoppingDePreciosLocatel de Automation Anywhere.

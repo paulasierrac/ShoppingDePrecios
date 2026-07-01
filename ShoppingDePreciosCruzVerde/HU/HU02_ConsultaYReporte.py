@@ -2,7 +2,7 @@
 ================================================================================
 HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Cruz Verde
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en cruzverde.com.co por EAN.
              Cruz Verde es una SPA Angular; el bot extrae el bloque HTML
              de las tarjetas ml-card-product directamente desde la pagina

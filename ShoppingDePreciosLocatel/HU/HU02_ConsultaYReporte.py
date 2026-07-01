@@ -2,7 +2,7 @@
 ================================================================================
 HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Locatel
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en la web de Locatel por EAN, guarda los
              resultados en BD y genera el reporte Excel.
              Equivale al bot HU02_ConsultaYReporte de Automation Anywhere.

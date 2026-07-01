@@ -2,7 +2,7 @@
 ================================================================================
 Main - Shopping de Precios Cruz Verde
 Nombre de la iniciativa: Shopping de Precios Cruz Verde
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Cruz Verde.
              Equivale al bot Main_ShoppingDePreciosCruzVerde de Automation Anywhere.

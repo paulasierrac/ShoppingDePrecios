@@ -2,7 +2,7 @@
 ================================================================================
 HU01 - Validacion y Carga de Insumo
 Nombre de la iniciativa: Shopping de Precios Locatel
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Valida el archivo Excel de insumo y lo carga a la Base de Datos.
              Equivale al bot HU01_ValidacionYCargaInsumo de Automation Anywhere.
 Ultima modificacion: 28/02/2025

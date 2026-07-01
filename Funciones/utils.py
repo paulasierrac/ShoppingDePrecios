@@ -1,7 +1,7 @@
 """
 ================================================================================
 Funciones utilitarias globales - Shopping de Precios Locatel
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Propiedad de Colsubsidio
 ================================================================================
 

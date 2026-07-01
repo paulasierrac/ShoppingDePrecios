@@ -2,7 +2,7 @@
 ================================================================================
 Main - Shopping de Precios Exito
 Nombre de la iniciativa: Shopping de Precios Exito
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Exito.
              Equivale al bot Main_ShoppingDePreciosExito de Automation Anywhere.

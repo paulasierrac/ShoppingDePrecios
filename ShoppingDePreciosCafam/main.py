@@ -2,7 +2,7 @@
 ================================================================================
 Main - Shopping de Precios Cafam
 Nombre de la iniciativa: Shopping de Precios Cafam
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Cafam.
              Equivale al bot Main_ShoppingDePreciosCafam de Automation Anywhere.

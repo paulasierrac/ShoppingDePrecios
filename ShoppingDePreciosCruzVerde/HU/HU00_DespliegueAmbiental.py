@@ -2,7 +2,7 @@
 ================================================================================
 HU00 - Despliegue Ambiental
 Nombre de la iniciativa: Shopping de Precios Cruz Verde
-Autor: KPMG Advisory, Tax & Legal SAS
+Autor: Paula Sierra — Net Applications
 Descripcion: Conecta a BD, carga todos los parametros nombrados desde la tabla
              [ShoppingDePrecios].[Parametros] y realiza limpieza de
              Logs, Screenshots, Reportes, Insumos y BD.
