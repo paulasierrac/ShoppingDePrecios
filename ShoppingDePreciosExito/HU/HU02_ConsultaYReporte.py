@@ -688,7 +688,7 @@ def _ejecutar_scraping_debug(browser, in_config, esquema, tabla_ins,
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
     cur_sq.execute(
-        f"SELECT Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1 LIMIT ?",
+        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
         (lote_debug,)
     )
     registros = cur_sq.fetchall()
