@@ -4,10 +4,10 @@ HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Cruz Verde
 Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en cruzverde.com.co por EAN.
-             Cruz Verde es una SPA Angular; el bot extrae el bloque HTML
-             de las tarjetas ml-card-product directamente desde la pagina
-             de resultados de busqueda, sin navegar al detalle.
-             La funcion _entre() parsea los campos del innerHTML extraido.
+             Cruz Verde es una SPA Angular; el bot busca por EAN, obtiene
+             la URL del primer resultado (formato /slug/COCV_XXXXXX.html)
+             y navega a la pagina de detalle para extraer nombre y precio
+             mediante multiples selectores CSS con fallback.
 Ultima modificacion: 01/07/2026
 Propiedad de Colsubsidio
 ================================================================================
@@ -30,7 +30,7 @@ Flujo principal:
 Estados:
   1  : Pendiente
   2  : Producto encontrado
-  3  : Sin coincidencia (URL no contiene EAN)
+  3  : Sin coincidencia (nombre no corresponde al EAN)
   99 : Sin informacion / no encontrado
 """
 
@@ -206,32 +206,84 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
                       task_name, in_config)
             return resultado
 
-        url_producto = card_data.get("url", "")
-        html         = card_data.get("html", "")
+        url_producto = card_data.get("url", "").strip()
 
-        # ── Validar que la URL del resultado contenga el EAN ─────────────
-        if ean not in url_producto:
+        # ── Validar que la URL sea del dominio Cruz Verde ─────────────────
+        # Las URLs de Cruz Verde usan codigos internos COCV_XXXXXX, nunca el EAN.
+        # Ejemplo: /producto-slug/COCV_162462.html
+        if not url_producto or "cruzverde.com.co" not in url_producto:
             write_log("Info",
-                      f"HU02: EAN ({ean}) — URL '{url_producto}' no contiene el EAN",
+                      f"HU02: EAN ({ean}) — URL de resultado no valida: '{url_producto}'",
                       task_name, in_config)
-            resultado.update({
-                "url_producto":  url_producto,
-                "estado":        "3",
-                "observaciones": "No existe coincidencia entre la informacion encontrada y el producto consultado",
-            })
+            resultado["url_producto"] = url_producto
             return resultado
 
-        # ── Parsear campos del innerHTML ───────────────────────────────────
-        nombre_prd  = _entre(html, 'class="product-name">', "</")
-        marca       = _entre(html, 'class="product-brand">', "</")
-        precio_con  = _entre(html, 'class="price-value">', "</")
-        precio_sin  = _entre(html, 'class="price-original">', "</")
-        banner      = _entre(html, 'class="badge-label">', "</")
+        # ── Navegar a la pagina de detalle del producto ───────────────────
+        write_log("Info", f"HU02: EAN ({ean}) — Navegando a detalle: {url_producto}",
+                  task_name, in_config)
+        try:
+            page.goto(url_producto, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(ESPERA_CARGA)
+            _descartar_modal(page)
+        except PlaywrightTimeout:
+            write_log("Warning", f"HU02: Timeout cargando detalle EAN ({ean})", task_name, in_config)
+            resultado["estado"]        = "99"
+            resultado["observaciones"] = "Timeout al cargar la pagina de detalle"
+            return resultado
 
-        if not nombre_prd:
-            nombre_prd = _entre(html, "product-name\">", "<")
-        if not precio_con:
-            precio_con = _entre(html, "actual-price\">", "<")
+        # ── Extraer campos desde la pagina de detalle ─────────────────────
+        datos = page.evaluate("""
+            (() => {
+                const getText = (sels) => {
+                    for (const sel of sels) {
+                        try {
+                            const el = document.querySelector(sel);
+                            if (el && el.textContent.trim()) return el.textContent.trim();
+                        } catch(e) {}
+                    }
+                    return '';
+                };
+                return {
+                    nombre: getText([
+                        'h1.product-name', '.product-name h1', '[class*="product-name"] h1',
+                        'h1[class*="product"]', '.product-title', '.pdp-name', 'h1'
+                    ]),
+                    marca: getText([
+                        '.product-brand', '[class*="product-brand"]', '.brand-name',
+                        '[class*="brand-name"]', '.pdp-brand'
+                    ]),
+                    precio_con: getText([
+                        '.price-value', '[class*="price-value"]', '.actual-price',
+                        '[class*="actual-price"]', '.sale-price', '[class*="sale-price"]',
+                        '.price .value', '.pdp-price'
+                    ]),
+                    precio_sin: getText([
+                        '.price-original', '[class*="price-original"]', '.old-price',
+                        '[class*="old-price"]', '.price-before', '[class*="price-before"]'
+                    ]),
+                    banner: getText([
+                        '.badge-label', '[class*="badge-label"]', '.promotion-label',
+                        '[class*="promo"]'
+                    ]),
+                };
+            })()
+        """)
+
+        nombre_prd = datos.get("nombre", "").strip()
+        marca      = datos.get("marca",  "").strip()
+        precio_con = datos.get("precio_con", "").strip()
+        precio_sin = datos.get("precio_sin", "").strip()
+        banner     = datos.get("banner", "").strip()
+
+        if not nombre_prd and not precio_con:
+            write_log("Info", f"HU02: EAN ({ean}) — No se pudo extraer datos del detalle",
+                      task_name, in_config)
+            resultado.update({
+                "url_producto": url_producto,
+                "estado":       "99",
+                "observaciones": "No se pudo extraer informacion del producto",
+            })
+            return resultado
 
         write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
                   task_name, in_config)
