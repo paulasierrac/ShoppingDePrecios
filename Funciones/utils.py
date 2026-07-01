@@ -111,7 +111,7 @@ def conectar_bd(config: dict) -> pyodbc.Connection:
 def write_log(in_state: str, in_message_log: str, in_task_name: str, in_config: dict) -> None:
     """
     Equivalente al bot WriteLog de AA.
-    Escribe una linea en el archivo de log diario si ActivarLog=true.
+    Siempre imprime a consola. Escribe a archivo si PathLog esta accesible.
 
     Formato de linea:
         dd/MM/yyyy HH:mm:ss | ESTADO | Mensaje | CodigoRobot | TaskName | Maquina
@@ -126,28 +126,32 @@ def write_log(in_state: str, in_message_log: str, in_task_name: str, in_config: 
     if activar != "true":
         return
 
-    # Ruta del archivo log: PathLog\Log_<Maquina>_<Usuario>_<yyyyMMdd>.txt
+    timestamp    = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    maquina      = socket.gethostname()
+    usuario      = getpass.getuser()
+    codigo_robot = in_config.get("CodigoRobot", "")
+    linea = (
+        f"{timestamp} | {in_state} | {in_message_log} | "
+        f"{codigo_robot} | {in_task_name} | {maquina}\n"
+    )
+
+    # Siempre a consola — independiente de PathLog
+    print(linea.rstrip())
+
+    # A archivo solo si PathLog esta configurado y accesible
     path_log = in_config.get("PathLog", "")
     if not path_log:
         return
 
-    Path(path_log).mkdir(parents=True, exist_ok=True)
-
-    fecha_archivo = datetime.now().strftime("%Y%m%d")
-    maquina = socket.gethostname()
-    usuario = getpass.getuser()
-    nombre_archivo = f"Log_{maquina}_{usuario}_{fecha_archivo}.txt"
-    ruta_archivo = os.path.join(path_log, nombre_archivo)
-
-    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    codigo_robot = in_config.get("CodigoRobot", "")
-    linea = f"{timestamp} | {in_state} | {in_message_log} | {codigo_robot} | {in_task_name} | {maquina}\n"
-
-    with open(ruta_archivo, "a", encoding="ansi", errors="replace") as f:
-        f.write(linea)
-
-    # Tambien imprimir en consola para depuracion
-    print(linea.rstrip())
+    try:
+        Path(path_log).mkdir(parents=True, exist_ok=True)
+        fecha_archivo  = datetime.now().strftime("%Y%m%d")
+        nombre_archivo = f"Log_{maquina}_{usuario}_{fecha_archivo}.txt"
+        ruta_archivo   = os.path.join(path_log, nombre_archivo)
+        with open(ruta_archivo, "a", encoding="ansi", errors="replace") as f:
+            f.write(linea)
+    except Exception as _log_err:
+        print(f"[write_log] No se pudo escribir en archivo: {_log_err}")
 
 
 # ---------------------------------------------------------------------------
@@ -180,59 +184,57 @@ def enviar_correo(
         i_attachment = []
 
     task_name = "EnviarCorreo"
-    write_log("INFO", f"Inicio funcion envio correo caso: {i_cod_email}", task_name, in_config)
+    write_log("Info", f"Inicio envio correo cod={i_cod_email}", task_name, in_config)
 
     try:
-        conn = conectar_bd(in_config)
+        conn   = conectar_bd(in_config)
         cursor = conn.cursor()
 
-        # Determinar esquema (puede llamarse 'Esquema' o 'Scheme' segun version)
         esquema = in_config.get("Esquema") or in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla = in_config.get("TablaEnvioCorreos", "EnvioCorreos")
+        tabla   = in_config.get("TablaEnvioCorreos", "EnvioCorreos")
 
-        sql = f"SELECT * FROM {esquema}.{tabla} WHERE CodEmailParameter = '{i_cod_email}'"
-        cursor.execute(sql)
+        cursor.execute(
+            f"SELECT * FROM {esquema}.{tabla} WHERE CodEmailParameter = ?",
+            (str(i_cod_email),)
+        )
         cols = [col[0] for col in cursor.description]
-        row = cursor.fetchone()
+        row  = cursor.fetchone()
 
         if row is None:
-            write_log("Warning", f"No se encontro registro para CodEmailParameter={i_cod_email}", task_name, in_config)
+            msg_err = (
+                f"enviar_correo: tabla {esquema}.{tabla} no tiene "
+                f"registro para CodEmailParameter={i_cod_email}. "
+                f"Verificar que cargar_tabla_envio_correos se ejecuto correctamente."
+            )
+            write_log("Warning", msg_err, task_name, in_config)
             conn.close()
-            return f"No se encontro registro para CodEmailParameter={i_cod_email}"
+            return msg_err
 
         fila = dict(zip(cols, row))
         conn.close()
 
         subject = fila.get("AsuntoEmailParameter", "")
-        body = fila.get("BodyEmailParameter", "")
-        to = fila.get("TOEmailParameter", "")
-        cc = fila.get("CCEmailParameter", "")
-        bcc = fila.get("BCCEmailParameter", "")
+        body    = fila.get("BodyEmailParameter", "")
+        to      = fila.get("TOEmailParameter", "")
+        cc      = fila.get("CCEmailParameter", "")
+        bcc     = fila.get("BCCEmailParameter", "")
 
-        # Reemplazar placeholders en asunto
         for key, val in i_replace_in_subject.items():
             subject = subject.replace(key, str(val))
-
-        # Reemplazar placeholders en cuerpo
         for key, val in i_replace_in_message.items():
             body = body.replace(key, str(val))
 
-        # Construir mensaje
-        msg = MIMEMultipart()
-        msg["From"] = i_from_address
-        msg["To"] = to
-        msg["Subject"] = subject
+        mime_msg = MIMEMultipart()
+        mime_msg["From"]    = i_from_address
+        mime_msg["To"]      = to
+        mime_msg["Subject"] = subject
         if cc:
-            msg["Cc"] = cc
+            mime_msg["Cc"] = cc
         if bcc:
-            msg["Bcc"] = bcc
+            mime_msg["Bcc"] = bcc
 
-        if i_html_format:
-            msg.attach(MIMEText(body, "html", "utf-8"))
-        else:
-            msg.attach(MIMEText(body, "plain", "utf-8"))
+        mime_msg.attach(MIMEText(body, "html" if i_html_format else "plain", "utf-8"))
 
-        # Adjuntos
         for ruta_adj in i_attachment:
             if os.path.isfile(ruta_adj):
                 with open(ruta_adj, "rb") as f:
@@ -243,33 +245,51 @@ def enviar_correo(
                     "Content-Disposition",
                     f'attachment; filename="{os.path.basename(ruta_adj)}"'
                 )
-                msg.attach(parte)
+                mime_msg.attach(parte)
 
-        # Armar lista de destinatarios
         destinatarios = []
         for campo in [to, cc, bcc]:
             if campo:
-                destinatarios.extend([d.strip() for d in campo.replace(";", ",").split(",") if d.strip()])
+                destinatarios.extend(
+                    [d.strip() for d in campo.replace(";", ",").split(",") if d.strip()]
+                )
 
         correo_cfg = in_config.get("_correo", {})
-        servidor = correo_cfg.get("servidor_smtp", "")
-        puerto = int(correo_cfg.get("puerto", 587))
-        usar_tls = correo_cfg.get("usar_tls", True)
-        usr_smtp = correo_cfg.get("usuario", i_from_address)
-        pwd_smtp = correo_cfg.get("contrasena", "")
+        servidor   = correo_cfg.get("servidor_smtp", "")
+        puerto     = int(correo_cfg.get("puerto", 587))
+        usar_tls   = correo_cfg.get("usar_tls", True)
+        usr_smtp   = correo_cfg.get("usuario", i_from_address)
+        pwd_smtp   = correo_cfg.get("contrasena", "")
 
-        with smtplib.SMTP(servidor, puerto) as server:
+        if not servidor:
+            msg_err = (
+                "enviar_correo: SMTP no configurado. "
+                "Agregar SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD en .env "
+                "o en Azure Key Vault."
+            )
+            write_log("Error", msg_err, task_name, in_config)
+            return msg_err
+
+        write_log("Info",
+                  f"Conectando a SMTP {servidor}:{puerto} como {usr_smtp}",
+                  task_name, in_config)
+
+        with smtplib.SMTP(servidor, puerto, timeout=30) as server:
+            server.ehlo()
             if usar_tls:
                 server.starttls()
+                server.ehlo()
             if usr_smtp and pwd_smtp:
                 server.login(usr_smtp, pwd_smtp)
-            server.sendmail(i_from_address, destinatarios, msg.as_string())
+            server.sendmail(i_from_address, destinatarios, mime_msg.as_string())
 
-        write_log("Info", f"Correo enviado exitosamente (cod={i_cod_email})", task_name, in_config)
+        write_log("Info",
+                  f"Correo enviado correctamente cod={i_cod_email} -> {destinatarios}",
+                  task_name, in_config)
 
     except Exception as e:
         out_system_exception = str(e)
-        write_log("Error", f"Error enviando correo cod={i_cod_email}: {e}", task_name, in_config)
+        write_log("Error", f"enviar_correo cod={i_cod_email}: {e}", task_name, in_config)
 
     return out_system_exception
 

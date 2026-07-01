@@ -7,7 +7,7 @@ Descripcion: Consulta precios en drogueriascafam.com.co por EAN via JavaScript.
              La busqueda retorna tarjetas de resultado; el bot valida que el URL
              del primer resultado contenga el EAN, navega al detalle y extrae
              los campos de precio usando selectores CSS via JS.
-Ultima modificacion: 22/06/2026
+Ultima modificacion: 01/07/2026
 Propiedad de Colsubsidio
 ================================================================================
 
@@ -39,45 +39,69 @@ import re
 import sys
 import time
 import socket
+import winreg
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
+from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, enviar_correo
 
 
-ESPERA_CARGA  = 30   # segundos — la pagina de Cafam es pesada
-ESPERA_REINT  = 3    # entre reintentos de extraccion JS
+ESPERA_CARGA  = 30000   # ms — la pagina de Cafam es pesada
+ESPERA_REINT  = 3000    # ms entre reintentos
 _LOTE_DEFAULT = 1000
-_MAX_POS      = 4    # posiciones de resultado a probar (0-3)
+_MAX_POS      = 4       # posiciones de resultado a probar (0-3)
 
 
-def _crear_driver(headless: bool = True) -> webdriver.Chrome:
-    opts = Options()
-    if headless:
-        opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1920,1080")
-    opts.add_argument("--lang=es-CO")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    return webdriver.Chrome(options=opts)
+# ============================================================
+# Helpers
+# ============================================================
+
+def _proxy_sistema_windows() -> dict:
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        )
+        proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+        if not proxy_enable:
+            return None
+        proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        winreg.CloseKey(key)
+        if proxy_server:
+            if not proxy_server.startswith("http"):
+                proxy_server = f"http://{proxy_server}"
+            return {"server": proxy_server}
+    except Exception:
+        pass
+    return None
 
 
-def _js_text(driver, selector: str, default: str = "") -> str:
+def _asegurar_chromium(in_config: dict, task_name: str) -> None:
+    """Descarga Playwright Chromium si no existe para el usuario actual."""
+    import subprocess
+    try:
+        with sync_playwright() as _pw:
+            exec_path = _pw.chromium.executable_path
+        if os.path.isfile(exec_path):
+            return
+    except Exception:
+        pass
+    write_log("Info", "HU02: Playwright Chromium no encontrado — descargando...", task_name, in_config)
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+    write_log("Info", "HU02: Playwright Chromium instalado correctamente", task_name, in_config)
+
+
+def _js_text(page: Page, selector: str, default: str = "") -> str:
     """Obtiene textContent del primer elemento que coincida con el selector CSS."""
     try:
-        result = driver.execute_script(
-            f"return document.querySelector('{selector}')?.textContent?.trim() || ''"
+        result = page.evaluate(
+            f"document.querySelector('{selector}')?.textContent?.trim() || ''"
         )
         return (result or "").strip()
     except Exception:
@@ -90,22 +114,25 @@ def _limpiar_precio(texto: str) -> str:
         return ""
     texto = texto.replace("$", "").replace("\xa0", "").strip()
     if "," in texto and "." in texto:
-        # Formato 1.500,00 → 1500.00
         texto = texto.replace(".", "").replace(",", ".")
     elif "," in texto:
         texto = texto.replace(",", ".")
     return re.sub(r"[^\d.]", "", texto)
 
 
-def _tomar_screenshot(driver, ruta: str) -> None:
+def _tomar_screenshot(page: Page, ruta: str) -> None:
     try:
         os.makedirs(os.path.dirname(ruta), exist_ok=True)
-        driver.save_screenshot(ruta)
+        page.screenshot(path=ruta)
     except Exception:
         pass
 
 
-def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
+# ============================================================
+# Logica de scraping por EAN en Cafam
+# ============================================================
+
+def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                           url_template: str, ruta_screenshot: str,
                           in_config: dict, task_name: str) -> dict:
     resultado = {
@@ -124,8 +151,8 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        driver.get(url_busqueda)
-        time.sleep(ESPERA_CARGA)
+        page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(ESPERA_CARGA)
 
         # ── Paso 1: Encontrar URL de producto que contenga el EAN ──────────
         url_producto = ""
@@ -134,24 +161,23 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
         for pos in range(_MAX_POS):
             for intento in range(3):
                 try:
-                    url_pos = driver.execute_script(
-                        f"return document.getElementsByClassName('dfd-card-link').item({pos})?.href || ''"
+                    url_pos = page.evaluate(
+                        f"document.getElementsByClassName('dfd-card-link').item({pos})?.href || ''"
                     ) or ""
-                    nombre_pos = driver.execute_script(
-                        f"return document.getElementsByClassName('dfd-card-title').item({pos})?.title || ''"
+                    nombre_pos = page.evaluate(
+                        f"document.getElementsByClassName('dfd-card-title').item({pos})?.title || ''"
                     ) or ""
 
                     if not url_pos:
-                        break  # no hay mas resultados
-
+                        break
                     if ean in url_pos:
                         url_producto = url_pos
                         nombre_prd   = nombre_pos
                         break
-                    break  # este resultado no contiene el EAN, probar siguiente posicion
+                    break
                 except Exception as e:
                     if intento < 2:
-                        time.sleep(ESPERA_REINT)
+                        page.wait_for_timeout(ESPERA_REINT)
                     else:
                         write_log("Warning", f"HU02: JS error pos {pos}: {e}", task_name, in_config)
             if url_producto:
@@ -160,7 +186,7 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
         if not url_producto:
             write_log("Info", f"HU02: EAN ({ean}) — No encontrado en resultados de busqueda",
                       task_name, in_config)
-            _tomar_screenshot(driver, ruta_screenshot)
+            _tomar_screenshot(page, ruta_screenshot)
             return resultado
 
         resultado["url_producto"] = url_producto
@@ -171,7 +197,7 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
             write_log("Info",
                       f"HU02: EAN ({ean}) — Sin coincidencia: nombre='{nombre_prd}', kw='{palabra_clave}'",
                       task_name, in_config)
-            _tomar_screenshot(driver, ruta_screenshot)
+            _tomar_screenshot(page, ruta_screenshot)
             resultado.update({
                 "nombre_prd":    nombre_prd,
                 "url_producto":  url_producto,
@@ -181,29 +207,29 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
             return resultado
 
         # ── Paso 3: Navegar a pagina de detalle ───────────────────────────
-        driver.get(url_producto)
-        time.sleep(ESPERA_CARGA)
+        page.goto(url_producto, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(ESPERA_CARGA)
 
         # ── Paso 4: Extraer campos via JS (3 reintentos) ──────────────────
         precio_con = precio_sin = marca = precio_unit = disponibilidad = ""
         for intento in range(3):
-            precio_con    = _js_text(driver, ".product-price span[itemprop='price']")
-            precio_sin    = _js_text(driver, ".product-discount .regular-price")
-            marca         = _js_text(driver, ".manufacturer-info-section .product-brand")
-            precio_unit   = _js_text(driver, ".pum.pum_product_page")
-            disponibilidad = _js_text(driver, ".add button[data-button-action='add-to-cart']")
+            precio_con     = _js_text(page, ".product-price span[itemprop='price']")
+            precio_sin     = _js_text(page, ".product-discount .regular-price")
+            marca          = _js_text(page, ".manufacturer-info-section .product-brand")
+            precio_unit    = _js_text(page, ".pum.pum_product_page")
+            disponibilidad = _js_text(page, ".add button[data-button-action='add-to-cart']")
             if precio_con or precio_sin:
                 break
             if intento < 2:
                 try:
-                    driver.find_element("tag name", "body").send_keys(Keys.F5)
+                    page.reload(wait_until="domcontentloaded", timeout=60000)
                 except Exception:
                     pass
-                time.sleep(ESPERA_REINT)
+                page.wait_for_timeout(ESPERA_REINT)
 
         write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
                   task_name, in_config)
-        _tomar_screenshot(driver, ruta_screenshot)
+        _tomar_screenshot(page, ruta_screenshot)
 
         sin_stock = "no disponible" in disponibilidad.lower()
 
@@ -220,6 +246,10 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
             "observaciones":       "Sin stock" if sin_stock else "",
         })
 
+    except PlaywrightTimeout:
+        write_log("Warning", f"HU02: Timeout consultando EAN ({ean})", task_name, in_config)
+        resultado["estado"]        = "99"
+        resultado["observaciones"] = "Timeout al cargar la pagina"
     except Exception as e:
         write_log("Warning", f"HU02: Error consultando EAN ({ean}): {e}", task_name, in_config)
         resultado["estado"]        = "99"
@@ -227,6 +257,10 @@ def _consultar_ean_cafam(driver, ean: str, palabra_clave: str,
 
     return resultado
 
+
+# ============================================================
+# Funcion principal
+# ============================================================
 
 def hu02_consulta_y_reporte(in_config: dict) -> str:
     out_system_exception = ""
@@ -237,7 +271,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
     if debug:
         write_log("Info", "[DEBUG] Modo debug activo: sin escrituras en BD ni correos", task_name, in_config)
 
-    driver = None
+    pw_instance = None
+    browser     = None
     try:
         esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
         tabla_ex     = in_config.get("TablaCafam",        "[Cafam]")
@@ -247,7 +282,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         lote         = int(in_config.get("LoteCafam",  str(_LOTE_DEFAULT)))
         delay        = int(in_config.get("DelayCafam", "300"))
 
-        # ── PASO 1 + PASO 2: Verificar registros (debug → BD Dev / normal → SQL Server) ──
+        # ── PASO 1 + PASO 2 ──────────────────────────────────────────────
         if debug:
             conn_sq = conectar_bd_debug(in_config)
             cur_sq  = conn_sq.cursor()
@@ -256,12 +291,10 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             conn_sq.close()
             hay_pendientes = cnt > 0
             if hay_pendientes:
-                write_log("Info",
-                          f"[DEBUG] {cnt} registros en BD Dev ({tabla_ins}) con Estado=1",
+                write_log("Info", f"[DEBUG] {cnt} registros en BD Dev ({tabla_ins}) con Estado=1",
                           task_name, in_config)
             else:
-                write_log("Info",
-                          f"[DEBUG] No hay registros en BD Dev ({tabla_ins}) con Estado=1",
+                write_log("Info", f"[DEBUG] No hay registros en BD Dev ({tabla_ins}) con Estado=1",
                           task_name, in_config)
         else:
             conn   = conectar_bd(in_config)
@@ -317,19 +350,30 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         os.makedirs(ruta_ss_base, exist_ok=True)
 
         # ── PASO 4: Bucle de scraping ─────────────────────────────────────
-        headless = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        headless  = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        proxy_cfg = _proxy_sistema_windows()
+
         write_log("Info", "HU02: Inicia consulta de productos por EAN", task_name, in_config)
 
+        _asegurar_chromium(in_config, task_name)
+        pw_instance = sync_playwright().start()
+        browser = pw_instance.chromium.launch(
+            headless=headless,
+            proxy=proxy_cfg,
+            args=["--lang=es-CO", "--no-sandbox", "--disable-dev-shm-usage",
+                  "--disable-gpu", "--disable-software-rasterizer"]
+        )
+
         if debug:
-            _scraping_debug(in_config, esquema, tabla_ins, url_template,
-                            ruta_ss_base, headless, task_name)
+            _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
+                            ruta_ss_base, task_name)
         else:
-            _scraping_normal(in_config, esquema, tabla_ex, url_template,
-                             ruta_ss_base, maquina, headless, lote, delay, task_name)
+            _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
+                             ruta_ss_base, maquina, lote, delay, task_name)
 
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
-        # ── PASO 5: Limpieza de precios (coma → punto decimal) ────────────
+        # ── PASO 5: Limpieza de precios ───────────────────────────────────
         if not debug:
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
@@ -354,17 +398,26 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
     finally:
-        if driver:
+        if browser:
             try:
-                driver.quit()
+                browser.close()
+            except Exception:
+                pass
+        if pw_instance:
+            try:
+                pw_instance.stop()
             except Exception:
                 pass
 
     return out_system_exception
 
 
-def _scraping_normal(in_config, esquema, tabla_ex, url_template,
-                     ruta_ss_base, maquina, headless, lote, delay, task_name):
+# ============================================================
+# Scraping modo normal
+# ============================================================
+
+def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
+                     ruta_ss_base, maquina, lote, delay, task_name):
     hay_mas = True
     while hay_mas:
         conn   = conectar_bd(in_config)
@@ -383,7 +436,15 @@ def _scraping_normal(in_config, esquema, tabla_ex, url_template,
         if not registros:
             break
 
-        driver = _crear_driver(headless=headless)
+        context = browser.new_context(
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+            locale="es-CO",
+            viewport={"width": 1920, "height": 1080},
+            ignore_https_errors=True,
+        )
+        page = context.new_page()
+
         try:
             for row in registros:
                 id_t, ean, kw = str(row[0]), str(row[1]), str(row[2] or "")
@@ -396,11 +457,11 @@ def _scraping_normal(in_config, esquema, tabla_ex, url_template,
                 conn.close()
 
                 write_log("Info", f"HU02: Consultando EAN ({ean})", task_name, in_config)
-                res = _consultar_ean_cafam(driver, ean, kw, url_template, ruta_ss, in_config, task_name)
+                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
                 _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name)
         finally:
             try:
-                driver.quit()
+                context.close()
             except Exception:
                 pass
 
@@ -414,6 +475,96 @@ def _scraping_normal(in_config, esquema, tabla_ex, url_template,
             write_log("Info", f"HU02: Esperando {delay}s antes del siguiente lote", task_name, in_config)
             time.sleep(delay)
 
+
+# ============================================================
+# Scraping modo debug
+# ============================================================
+
+def _scraping_debug(browser, in_config, esquema, tabla_ins,
+                    url_template, ruta_ss_base, task_name):
+    lote_debug = int(in_config.get("LoteDebug", "3"))
+    conn_sq = conectar_bd_debug(in_config)
+    cur_sq  = conn_sq.cursor()
+    cur_sq.execute(
+        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
+        (lote_debug,)
+    )
+    registros = cur_sq.fetchall()
+
+    if not registros:
+        write_log("Info", "[DEBUG] No hay registros en TicketInsumo con Estado=1", task_name, in_config)
+        conn_sq.close()
+        return
+
+    write_log("Info", f"[DEBUG] Procesando {len(registros)} EAN(s) (LoteDebug={lote_debug})",
+              task_name, in_config)
+
+    resultados = []
+    context = browser.new_context(
+        user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+        locale="es-CO",
+        viewport={"width": 1920, "height": 1080},
+        ignore_https_errors=True,
+    )
+    page = context.new_page()
+
+    try:
+        for row in registros:
+            id_t = str(row[0])
+            ean  = str(row[1])
+            desc = str(row[2] or "")
+            m    = re.search(r'[a-zA-Z]{3,}', desc)
+            kw   = m.group(0) if m else ""
+            ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
+            print(f"\n  EAN: {ean}  |  {desc[:50]}")
+            res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
+            print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
+            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
+    finally:
+        try:
+            context.close()
+        except Exception:
+            pass
+
+    if resultados:
+        ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        maquina = socket.gethostname()
+        cur_sq.execute(f"DELETE FROM {esquema}.Cafam")
+        for r in resultados:
+            cur_sq.execute(
+                f"INSERT INTO {esquema}.Cafam "
+                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
+                " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
+                " BannerProducto, UrlProducto, RutaImagen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (ahora, ahora, ahora,
+                 r.get("estado", "99"), r.get("observaciones", ""), 0, maquina,
+                 "", r["EAN"], r["Descripcion"], "", ahora,
+                 r.get("marca", ""), r.get("nombre_prd", ""), "",
+                 r.get("precio_unitario", ""), r.get("precio_con_desc", ""),
+                 r.get("precio_sin_desc", ""), r.get("porc_descuento", ""),
+                 r.get("precio_fidelizacion", ""), r.get("banner", ""),
+                 r.get("url_producto", ""), r.get("RutaImagen", ""))
+            )
+        conn_sq.commit()
+        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.Cafam)",
+                  task_name, in_config)
+
+        ruta_debug = _PROJECT_ROOT / "debug"
+        ruta_debug.mkdir(exist_ok=True)
+        sello      = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCafam_{sello}.xlsx")
+        pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
+        write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
+        print(f"\n  Reporte debug: {ruta_excel}")
+    conn_sq.close()
+
+
+# ============================================================
+# Persistencia BD (modo normal)
+# ============================================================
 
 def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
     estado      = res["estado"]
@@ -461,79 +612,9 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
     conn.close()
 
 
-def _scraping_debug(in_config, esquema, tabla_ins, url_template,
-                    ruta_ss_base, headless, task_name):
-    """Lee de pruebas.db, hace scraping, escribe en pruebas.db (Cafam) y genera Excel."""
-    lote_debug = int(in_config.get("LoteDebug", "3"))
-    conn_sq = conectar_bd_debug(in_config)
-    cur_sq  = conn_sq.cursor()
-    cur_sq.execute(
-        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
-        (lote_debug,)
-    )
-    registros = cur_sq.fetchall()
-
-    if not registros:
-        write_log("Info", "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1",
-                  task_name, in_config)
-        conn_sq.close()
-        return
-
-    resultados = []
-    driver = _crear_driver(headless=False)
-    try:
-        for row in registros:
-            id_t = str(row[0])
-            ean  = str(row[1])
-            desc = str(row[2] or "")
-            m    = re.search(r'[a-zA-Z]{3,}', desc)
-            kw   = m.group(0) if m else ""
-            ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
-            print(f"\n  EAN: {ean}  |  {desc[:50]}")
-            res = _consultar_ean_cafam(driver, ean, kw, url_template, ruta_ss, in_config, task_name)
-            print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
-            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-    if resultados:
-        ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        maquina = socket.gethostname()
-        cur_sq.execute(f"DELETE FROM {esquema}.Cafam")
-        for r in resultados:
-            cur_sq.execute(
-                f"INSERT INTO {esquema}.Cafam "
-                "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
-                " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
-                " BannerProducto, UrlProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (ahora, ahora, ahora,
-                 r.get("estado", "99"), r.get("observaciones", ""), 0, maquina,
-                 "", r["EAN"], r["Descripcion"], "", ahora,
-                 r.get("marca", ""), r.get("nombre_prd", ""), "",
-                 r.get("precio_unitario", ""), r.get("precio_con_desc", ""),
-                 r.get("precio_sin_desc", ""), r.get("porc_descuento", ""),
-                 r.get("precio_fidelizacion", ""), r.get("banner", ""),
-                 r.get("url_producto", ""), r.get("RutaImagen", ""))
-            )
-        conn_sq.commit()
-        write_log("Info",
-                  f"[DEBUG] {len(resultados)} registros guardados en BD Dev ({esquema}.Cafam)",
-                  task_name, in_config)
-
-        ruta_debug = _PROJECT_ROOT / "debug"
-        ruta_debug.mkdir(exist_ok=True)
-        sello      = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCafam_{sello}.xlsx")
-        pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
-        write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
-        print(f"\n  Reporte debug: {ruta_excel}")
-    conn_sq.close()
-
+# ============================================================
+# Generacion de reportes Excel (modo normal)
+# ============================================================
 
 def _generar_reportes(in_config, esquema, tabla_ex, task_name):
     conn   = conectar_bd(in_config)
