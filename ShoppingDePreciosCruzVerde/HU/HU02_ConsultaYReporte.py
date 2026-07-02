@@ -368,7 +368,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                          [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
                          [Porc.Descuento],[PrecioFidelizacion],
                          [BannerProducto],[UrlProducto],[RutaImagen])
-                    SELECT a.[Id], a.[FechaInicio], GETDATE(), '',
+                    SELECT a.[Id], a.[FechaInicio], GETDATE(), NULL,
                            '1','',0,'{maquina}',
                            a.[PLU], a.[EAN], a.[Descripcion], a.[Categoria], GETDATE(),
                            '','','','','','','','','','',''

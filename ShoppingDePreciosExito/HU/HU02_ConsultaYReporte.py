@@ -389,7 +389,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                          [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
                          [Porc.Descuento],[PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen])
                     SELECT
-                        a.[Id], a.[FechaInicio], GETDATE(), '',
+                        a.[Id], a.[FechaInicio], GETDATE(), NULL,
                         '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
                         '','','','','','','','','','',''
                     FROM {esquema}.{tabla_ins} a

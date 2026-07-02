@@ -315,7 +315,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                          [Porc.Descuento],[PrecioFidelizacion],
                          [UrlProducto],[BannerProducto],[RutaImagen],
                          [Observaciones],[Reintentos])
-                    SELECT a.[Id], a.[FechaInicio], GETDATE(), '',
+                    SELECT a.[Id], a.[FechaInicio], GETDATE(), NULL,
                            '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
                            '','','','','','','','','','','','',0
                     FROM {esquema}.{tabla_ins} a
