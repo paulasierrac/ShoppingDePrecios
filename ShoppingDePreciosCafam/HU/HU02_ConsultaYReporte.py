@@ -18,7 +18,7 @@ Flujo principal:
   4. Bucle de scraping por lotes (LoteCafam, default 1000).
      Para cada EAN:
        a. Navega a URL de busqueda y espera carga (30s).
-       b. Prueba hasta 4 posiciones en los resultados buscando el EAN en la URL.
+       b. Toma el primer resultado (Cafam usa slugs internos, no el EAN en la URL).
        c. Valida nombre del producto vs palabra clave.
        d. Navega a la pagina de detalle y extrae precios via JS.
        e. Detecta "Sin stock".
@@ -30,7 +30,7 @@ Flujo principal:
 Estados:
   1  : Pendiente
   2  : Producto encontrado (incluye sin stock con Observaciones='Sin stock')
-  3  : URL encontrada pero nombre no coincide con el EAN
+  3  : Primer resultado encontrado pero nombre no coincide con el EAN
   99 : Sin informacion / no encontrado
 """
 
@@ -154,34 +154,32 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(ESPERA_CARGA)
 
-        # ── Paso 1: Encontrar URL de producto que contenga el EAN ──────────
+        # ── Paso 1: Tomar el primer resultado de busqueda ─────────────────
+        # Cafam usa slugs/IDs internos en la URL — el EAN nunca aparece en ella.
+        # La busqueda por EAN retorna solo el producto correcto, asi que
+        # tomamos el primer resultado sin validar el EAN en la URL.
         url_producto = ""
         nombre_prd   = ""
 
-        for pos in range(_MAX_POS):
-            for intento in range(3):
-                try:
-                    url_pos = page.evaluate(
-                        f"document.getElementsByClassName('dfd-card-link').item({pos})?.href || ''"
-                    ) or ""
-                    nombre_pos = page.evaluate(
-                        f"document.getElementsByClassName('dfd-card-title').item({pos})?.title || ''"
-                    ) or ""
-
-                    if not url_pos:
-                        break
-                    if ean in url_pos:
-                        url_producto = url_pos
-                        nombre_prd   = nombre_pos
-                        break
+        for intento in range(3):
+            try:
+                url_pos = page.evaluate(
+                    "document.getElementsByClassName('dfd-card-link').item(0)?.href || ''"
+                ) or ""
+                nombre_pos = page.evaluate(
+                    "document.getElementsByClassName('dfd-card-title').item(0)?.title || ''"
+                ) or ""
+                if url_pos:
+                    url_producto = url_pos
+                    nombre_prd   = nombre_pos
                     break
-                except Exception as e:
-                    if intento < 2:
-                        page.wait_for_timeout(ESPERA_REINT)
-                    else:
-                        write_log("Warning", f"HU02: JS error pos {pos}: {e}", task_name, in_config)
-            if url_producto:
-                break
+                if intento < 2:
+                    page.wait_for_timeout(ESPERA_REINT)
+            except Exception as e:
+                if intento < 2:
+                    page.wait_for_timeout(ESPERA_REINT)
+                else:
+                    write_log("Warning", f"HU02: JS error buscando tarjeta: {e}", task_name, in_config)
 
         if not url_producto:
             write_log("Info", f"HU02: EAN ({ean}) — No encontrado en resultados de busqueda",
