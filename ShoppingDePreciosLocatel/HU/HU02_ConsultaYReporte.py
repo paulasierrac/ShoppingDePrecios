@@ -341,6 +341,16 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 2: Insertar en TablaLocatel los IDs nuevos de TicketInsumo
         # ----------------------------------------------------------------
+        # TRUNCATE en TicketInsumo resetea el IDENTITY a 1, por lo que los
+        # nuevos IDs colisionan con los de corridas anteriores en Locatel.
+        # Eliminamos los registros viejos cuyos IDs coinciden con el lote
+        # actual pero tienen una fecha anterior (ya reportados).
+        cursor.execute(f"""
+            DELETE b FROM {esquema}.{tabla_loc} b
+            JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+            WHERE b.FechaInicio < a.FechaInicio
+        """)
+
         cursor.execute(f"""
             SELECT a.Id
             FROM {esquema}.{tabla_ins} a

@@ -374,6 +374,11 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
             # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
             cursor.execute(f"""
+                DELETE b FROM {esquema}.{tabla_ex} b
+                JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+                WHERE b.FechaInicio < a.FechaInicio
+            """)
+            cursor.execute(f"""
                 SELECT a.Id
                 FROM {esquema}.{tabla_ins} a
                 LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
