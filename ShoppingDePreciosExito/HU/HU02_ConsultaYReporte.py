@@ -866,7 +866,7 @@ def _generar_reportes(in_config: dict, esquema: str,
     conn.close()
 
     for fecha_row in fechas:
-        fecha_inicio = str(fecha_row[0])
+        fecha_inicio = str(fecha_row[0])[:23]
         fecha_sello  = str(fecha_row[1])
         _generar_reporte_fecha(in_config, esquema, tabla_ex,
                                fecha_inicio, fecha_sello, task_name)

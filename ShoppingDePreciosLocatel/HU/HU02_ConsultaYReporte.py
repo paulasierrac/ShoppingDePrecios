@@ -632,7 +632,7 @@ def _generar_reportes(in_config: dict, esquema: str,
     conn.close()
 
     for fecha_row in fechas:
-        fecha_inicio = str(fecha_row[0])
+        fecha_inicio = str(fecha_row[0])[:23]   # '2026-07-02 12:32:35.123' — 3 ms digits que acepta SQL Server
         fecha_sello  = str(fecha_row[1])
 
         _generar_reporte_fecha(

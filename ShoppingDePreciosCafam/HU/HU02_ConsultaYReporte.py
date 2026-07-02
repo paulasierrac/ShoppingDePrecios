@@ -630,7 +630,7 @@ def _generar_reportes(in_config, esquema, tabla_ex, task_name):
     fechas = cursor.fetchall()
     conn.close()
     for row in fechas:
-        _generar_reporte_fecha(in_config, esquema, tabla_ex, str(row[0]), str(row[1]), task_name)
+        _generar_reporte_fecha(in_config, esquema, tabla_ex, str(row[0])[:23], str(row[1]), task_name)
 
 
 def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sello, task_name):
