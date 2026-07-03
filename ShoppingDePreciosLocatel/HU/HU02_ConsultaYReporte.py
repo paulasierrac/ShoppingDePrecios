@@ -122,12 +122,25 @@ def _extraer_precio_entero(texto: str) -> str:
     return re.sub(r"[^\d]", "", texto)
 
 
+def _cerrar_modal_geolocalizacion(page: Page, task_name: str, in_config: dict) -> None:
+    """Cierra el modal 'Elige tu ubicación' de Locatel si está visible."""
+    try:
+        btn = page.query_selector("button.locatelcolombia-regionalizador-0-x-btnClose")
+        if btn and btn.is_visible():
+            btn.click()
+            page.wait_for_timeout(1000)
+            write_log("Info", "HU02: Modal de geolocalización cerrado", task_name, in_config)
+    except Exception:
+        pass
+
+
 # ============================================================
 # Logica de scraping por EAN en Locatel
 # ============================================================
 
 def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
-                   ruta_screenshot: str, in_config: dict, task_name: str) -> dict:
+                   ruta_screenshot: str, in_config: dict, task_name: str,
+                   primer_ean: bool = False) -> dict:
     """
     Navega a la URL de busqueda de Locatel para el EAN dado y extrae:
       titulo, precio_con_desc, precio_sin_desc, disponibilidad, marca, url_producto
@@ -159,30 +172,26 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             page.wait_for_timeout(1500)
             return resultado
 
-        page.wait_for_timeout(ESPERA_5S)
+        # Primer EAN: esperar 12 s para que el banner inicial desaparezca (~10 s)
+        page.wait_for_timeout(12000 if primer_ean else ESPERA_5S)
+        _cerrar_modal_geolocalizacion(page, task_name, in_config)
 
-        # ── Obtener URL del primer producto en resultados ──────────────
-        url_producto = ""
+        # ── URL del producto (página de detalle, ya estamos en ella) ──
+        resultado["url_producto"] = page.url
+
+        # ── Titulo del producto (h1 de la página de detalle) ──────────
+        titulo = ""
         for _ in range(5):
-            url_producto = _js(
+            titulo = _js(
                 page,
-                "document.getElementsByClassName("
-                "'vtex-product-summary-2-x-clearLink "
-                "vtex-product-summary-2-x-clearLink--itemList "
-                "h-100 flex flex-column').item(0)?.href"
+                "document.querySelector("
+                "'h1.locatelcolombia-components-5-x-name-products')"
+                "?.innerText.trim()"
             )
-            if url_producto:
+            if titulo:
                 break
             page.wait_for_timeout(ESPERA_3S)
 
-        resultado["url_producto"] = url_producto or url_consulta
-
-        # ── Titulo del producto ────────────────────────────────────────
-        titulo = _js(
-            page,
-            "document.querySelector('.vtex-product-summary-2-x-productBrand')"
-            "?.innerText.trim()"
-        )
         resultado["titulo"] = titulo or ""
 
         if not titulo:
@@ -197,20 +206,21 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             return resultado
 
         # ── Precios ───────────────────────────────────────────────────
+        # El precio está dividido en múltiples spans currencyInteger--summary
+        # (ej: "26" y "850" → "26850"). Se concatenan todos.
         precio_con_desc_raw = _js(
             page,
             "[...document.querySelectorAll("
-            "'.vtex-product-price-1-x-sellingPriceValue "
-            ".vtex-product-summary-2-x-currencyInteger')]"
-            ".map(el => el.innerText.trim())[0] || "
-            "document.querySelector("
-            "'.vtex-product-summary-2-x-currencyInteger')?.innerText.trim()"
+            "'.vtex-product-price-1-x-sellingPriceValue--summary "
+            ".vtex-product-price-1-x-currencyInteger--summary')]"
+            ".map(el => el.innerText.trim()).join('')"
         )
         precio_sin_desc_raw = _js(
             page,
-            "document.querySelector("
-            "'.vtex-product-price-1-x-listPriceValue "
-            ".vtex-product-summary-2-x-currencyInteger')?.innerText.trim()"
+            "[...document.querySelectorAll("
+            "'.vtex-product-price-1-x-listPriceValue--summary "
+            ".vtex-product-price-1-x-currencyInteger--summary')]"
+            ".map(el => el.innerText.trim()).join('')"
         )
 
         precio_con_desc = _extraer_precio_entero(str(precio_con_desc_raw or ""))
@@ -224,6 +234,8 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         resultado["precio_sin_desc"] = precio_sin_desc
 
         # ── Disponibilidad / Stock ─────────────────────────────────────
+        # Si aparece el botón "sin stock" (buttonNoPdp) → sin stock.
+        # Si solo existe "buttonPdp" (COMPRAR) → disponible.
         disponibilidad_raw = _js(
             page,
             "(document.querySelector("
@@ -501,7 +513,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             )
             page = context.new_page()
 
-            for row in registros:
+            for i, row in enumerate(registros):
                 id_ticket     = str(row[0])
                 ean           = str(row[1])
                 palabra_clave = str(row[2] or "")
@@ -535,7 +547,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     url_template=url_template,
                     ruta_screenshot=ruta_ss,
                     in_config=in_config,
-                    task_name=task_name
+                    task_name=task_name,
+                    primer_ean=(i == 0),
                 )
 
                 conn   = conectar_bd(in_config)
