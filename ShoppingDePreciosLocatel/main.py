@@ -6,9 +6,11 @@ Autor: Paula Sierra — Net Applications
 Descripcion: Orquesta secuencialmente las tareas del proceso de shopping
              de precios para Locatel.
              Equivale al bot Main_ShoppingDePreciosLocatel de Automation Anywhere.
-Ultima modificacion: 27/05/2025
+Ultima modificacion: 03/07/2026
 Propiedad de Colsubsidio
 ================================================================================
+
+Modo debug: set RPA_DEBUG=true  (sin escrituras en BD ni correos, Chrome visible)
 
 Flujo:
   1. Ejecuta HU00_DespliegueAmbiental (hasta 3 intentos) para obtener el
@@ -23,8 +25,14 @@ Flujo:
   6. En caso de error: envia correo de error (codEmail=99).
 """
 
+import os
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+_DEBUG = os.environ.get("RPA_DEBUG", "").lower() in ("1", "true", "si", "yes")
 
 _PHARMACY_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT  = _PHARMACY_ROOT.parent
@@ -61,6 +69,11 @@ def main() -> None:
             TASK_NAME, io_config
         )
         sys.exit(1)
+
+    io_config["_debug"] = _DEBUG
+    if _DEBUG:
+        io_config["HeadlessChrome"] = "false"
+        print("[DEBUG] Modo desarrollo activo — sin escrituras en BD")
 
     write_log("Info", "-" * 100, TASK_NAME, io_config)
     write_log(
