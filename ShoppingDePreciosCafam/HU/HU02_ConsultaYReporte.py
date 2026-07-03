@@ -167,9 +167,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             # Crear nueva pagina por EAN genera ERR_ABORTED porque Cafam usa
             # Phoenix LiveView (WebSocket) que interpreta multiples conexiones
             # nuevas como bot y aborta las peticiones.
+            # page.fill() limpia el input, pone el nuevo EAN y dispara los
+            # eventos input/change que Doofinder necesita para procesar la busqueda.
             try:
-                page.triple_click('.dfd-searchbox-input')
-                page.keyboard.type(ean, delay=30)
+                page.fill('.dfd-searchbox-input', ean)
                 page.keyboard.press('Enter')
                 page.wait_for_timeout(ESPERA_CARGA)
             except Exception as search_err:
