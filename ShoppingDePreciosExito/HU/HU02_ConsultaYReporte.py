@@ -973,12 +973,17 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
 
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
-    ruta_reporte     = in_config.get("RutaReporte", "")
-    os.makedirs(ruta_reporte, exist_ok=True)
     nombre_resultado = in_config.get("NombreResultado",     "ReportePricingExito_")
     nombre_hoja      = in_config.get("NombreHojaResultado", "ReportePricingExito")
-    nombre_excel     = f"{nombre_resultado}{fecha_sello}.xlsx"
-    ruta_excel       = os.path.join(ruta_reporte, nombre_excel)
+
+    if in_config.get("_debug"):
+        ruta_reporte = str(_PROJECT_ROOT / "debug")
+        ruta_excel   = os.path.join(ruta_reporte, f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx")
+    else:
+        ruta_reporte = in_config.get("RutaReporte", "")
+        ruta_excel   = os.path.join(ruta_reporte, f"{nombre_resultado}{fecha_sello}.xlsx")
+
+    os.makedirs(ruta_reporte, exist_ok=True)
 
     with pd.ExcelWriter(ruta_excel, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=nombre_hoja, index=False)

@@ -160,10 +160,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             write_log("Warning",
                       f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
                       task_name, in_config)
-            try:
-                page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
-            except Exception:
-                pass
+            page.wait_for_timeout(1500)
             return resultado
 
         page.wait_for_timeout(ESPERA_CARGA)
@@ -718,11 +715,17 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
         return
 
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
-    ruta_rep    = in_config.get("RutaReporte", "")
-    os.makedirs(ruta_rep, exist_ok=True)
     nombre_res  = in_config.get("NombreResultado", "ReportePricing")
     nombre_hoja = in_config.get("NombreHojaResultado", "ReportePricingCafam")
-    ruta_excel  = os.path.join(ruta_rep, f"{nombre_res}{fecha_sello}.xlsx")
+
+    if in_config.get("_debug"):
+        ruta_rep   = str(_PROJECT_ROOT / "debug")
+        ruta_excel = os.path.join(ruta_rep, f"DEBUG_{nombre_res}{fecha_sello}.xlsx")
+    else:
+        ruta_rep   = in_config.get("RutaReporte", "")
+        ruta_excel = os.path.join(ruta_rep, f"{nombre_res}{fecha_sello}.xlsx")
+
+    os.makedirs(ruta_rep, exist_ok=True)
 
     with pd.ExcelWriter(ruta_excel, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=nombre_hoja, index=False)
