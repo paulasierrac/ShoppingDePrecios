@@ -417,20 +417,26 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 4: Estructura de carpetas de screenshots
         # ----------------------------------------------------------------
+        debug      = in_config.get("_debug", False)
         now = datetime.now()
-        ruta_screenshots = os.path.join(
-            in_config.get("RutaScreenshots", ""),
-            in_config.get("CarpetaLocatel", ""),
-            str(now.year),
-            f"{now.month:02d}",
-            f"{now.day:02d}"
-        )
+        if debug:
+            ruta_screenshots = str(
+                _PROJECT_ROOT / "debug" / "screenshots" / "Locatel"
+                / str(now.year) / f"{now.month:02d}" / f"{now.day:02d}"
+            )
+        else:
+            ruta_screenshots = os.path.join(
+                in_config.get("RutaScreenshots", ""),
+                in_config.get("CarpetaLocatel", ""),
+                str(now.year),
+                f"{now.month:02d}",
+                f"{now.day:02d}"
+            )
         os.makedirs(ruta_screenshots, exist_ok=True)
 
         # ----------------------------------------------------------------
         # PASO 5: Bucle principal de scraping con Playwright
         # ----------------------------------------------------------------
-        debug      = in_config.get("_debug", False)
         headless   = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
         proxy_url  = _proxy_sistema_windows()
         proxy_cfg  = {"server": proxy_url} if proxy_url else None
