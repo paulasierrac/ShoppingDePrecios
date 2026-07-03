@@ -357,18 +357,28 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         cursor = conn.cursor()
 
         # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
+        cursor.execute(f"SELECT COUNT(*) FROM {esquema}.{tabla_ins} WHERE Estado='1'")
+        cnt_insumo = cursor.fetchone()[0]
+        write_log("Info", f"HU02: TicketInsumo tiene {cnt_insumo} registros con Estado=1", task_name, in_config)
+
         cursor.execute(f"""
             DELETE b FROM {esquema}.{tabla_ex} b
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
             WHERE b.FechaInicio < a.FechaInicio
         """)
+        filas_eliminadas = cursor.rowcount
+        if filas_eliminadas:
+            write_log("Info", f"HU02: DELETE elimino {filas_eliminadas} registros obsoletos de {tabla_ex}", task_name, in_config)
+
         cursor.execute(f"""
-            SELECT a.Id
-            FROM {esquema}.{tabla_ins} a
+            SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
             LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
             WHERE b.Id IS NULL AND a.Estado='1'
         """)
-        if cursor.fetchone() is not None:
+        cnt_nuevos = cursor.fetchone()[0]
+        write_log("Info", f"HU02: Hay {cnt_nuevos} registros nuevos para insertar en {tabla_ex}", task_name, in_config)
+
+        if cnt_nuevos > 0:
             cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
             cursor.execute(f"""
                 INSERT INTO {esquema}.{tabla_ex}
@@ -387,15 +397,19 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             """)
             cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
             write_log("Info",
-                      f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_ex})",
+                      f"HU02: INSERT ejecutado — {cnt_nuevos} registros cargados en {tabla_ex}",
                       task_name, in_config)
+        else:
+            write_log("Info", f"HU02: Sin registros nuevos para insertar en {tabla_ex}", task_name, in_config)
 
         # PASO 2: Verificar si hay registros pendientes
         cursor.execute(f"""
-            SELECT TOP(1) 1 FROM {esquema}.{tabla_ex}
+            SELECT COUNT(*) FROM {esquema}.{tabla_ex}
             WHERE Estado='1' OR Estado='2' OR Estado='99'
         """)
-        hay_pendientes = cursor.fetchone() is not None
+        cnt_pendientes = cursor.fetchone()[0]
+        hay_pendientes = cnt_pendientes > 0
+        write_log("Info", f"HU02: {tabla_ex} tiene {cnt_pendientes} registros pendientes (Estado 1/2/99)", task_name, in_config)
         conn.commit()
         conn.close()
 
@@ -542,8 +556,8 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
         registros = cursor.fetchall()
         conn.close()
 
+        write_log("Info", f"HU02: Lote scraping obtenido: {len(registros)} registros con Estado=1", task_name, in_config)
         if not registros:
-            write_log("Info", "HU02: No hay registros con Estado=1 pendientes de consultar", task_name, in_config)
             hay_mas = False
             break
 
