@@ -501,7 +501,6 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True,
         )
-        page = context.new_page()
 
         try:
             for row in registros:
@@ -515,7 +514,17 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
                 conn.close()
 
                 write_log("Info", f"HU02: Consultando EAN ({ean})", task_name, in_config)
-                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
+                # Pagina nueva por EAN: Cafam usa Doofinder con Phoenix LiveView
+                # (WebSocket). Si se reutiliza la pagina, el estado Doofinder
+                # queda con los resultados del EAN anterior y no se refresca.
+                page = context.new_page()
+                try:
+                    res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
                 _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name)
         finally:
             try:
@@ -565,7 +574,6 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         viewport={"width": 1920, "height": 1080},
         ignore_https_errors=True,
     )
-    page = context.new_page()
 
     try:
         for row in registros:
@@ -576,7 +584,16 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             kw   = m.group(0) if m else ""
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
-            res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
+            # Pagina nueva por EAN: Doofinder/Phoenix LiveView no refresca
+            # su estado si se reutiliza la misma pagina entre busquedas.
+            page = context.new_page()
+            try:
+                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
             resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
     finally:
