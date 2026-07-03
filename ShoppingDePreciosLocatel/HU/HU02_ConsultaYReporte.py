@@ -122,14 +122,28 @@ def _extraer_precio_entero(texto: str) -> str:
     return re.sub(r"[^\d]", "", texto)
 
 
-def _cerrar_modal_geolocalizacion(page: Page, task_name: str, in_config: dict) -> None:
-    """Cierra el modal 'Elige tu ubicación' de Locatel si está visible."""
+def _cerrar_modales_locatel(page: Page, task_name: str, in_config: dict) -> None:
+    """Cierra popups y modales de Locatel si están visibles:
+    - Modal 'Elige tu ubicación' (geolocalización)
+    - Popup promocional (wpn-modal-img-container: Green Days, etc.)
+    """
+    # Modal de geolocalización "Elige tu ubicación"
     try:
         btn = page.query_selector("button.locatelcolombia-regionalizador-0-x-btnClose")
         if btn and btn.is_visible():
             btn.click()
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(800)
             write_log("Info", "HU02: Modal de geolocalización cerrado", task_name, in_config)
+    except Exception:
+        pass
+
+    # Popup promocional (imágenes, ofertas, etc.) → cerrar con Escape
+    try:
+        popup = page.query_selector("div.wpn-modal-img-container")
+        if popup and popup.is_visible():
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+            write_log("Info", "HU02: Popup promocional cerrado", task_name, in_config)
     except Exception:
         pass
 
@@ -174,25 +188,42 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
 
         # Primer EAN: esperar 12 s para que el banner inicial desaparezca (~10 s)
         page.wait_for_timeout(12000 if primer_ean else ESPERA_5S)
-        _cerrar_modal_geolocalizacion(page, task_name, in_config)
+        _cerrar_modales_locatel(page, task_name, in_config)
 
-        # ── URL del producto (página de detalle, ya estamos en ella) ──
-        resultado["url_producto"] = page.url
-
-        # ── Titulo del producto (h1 de la página de detalle) ──────────
+        # ── URL y Titulo del primer producto ──────────────────────────
+        # Locatel puede estar en página de búsqueda (cards) o de detalle
+        # (redirect cuando hay un único resultado por EAN).
+        # Se prueba primero el h1 de detalle y se usa productBrand como fallback.
         titulo = ""
+        url_producto = ""
         for _ in range(5):
+            # Página de detalle (redirect de EAN único)
             titulo = _js(
                 page,
                 "document.querySelector("
                 "'h1.locatelcolombia-components-5-x-name-products')"
                 "?.innerText.trim()"
             )
+            if not titulo:
+                # Página de resultados de búsqueda (cards)
+                titulo = _js(
+                    page,
+                    "document.querySelector("
+                    "'.vtex-product-summary-2-x-productBrand')"
+                    "?.innerText.trim()"
+                )
+            if not url_producto:
+                url_producto = _js(
+                    page,
+                    "document.querySelector("
+                    "'.vtex-product-summary-2-x-clearLink--itemList')?.href"
+                ) or page.url
             if titulo:
                 break
             page.wait_for_timeout(ESPERA_3S)
 
-        resultado["titulo"] = titulo or ""
+        resultado["titulo"]      = titulo or ""
+        resultado["url_producto"] = url_producto or page.url
 
         if not titulo:
             write_log(
@@ -206,21 +237,28 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             return resultado
 
         # ── Precios ───────────────────────────────────────────────────
-        # El precio está dividido en múltiples spans currencyInteger--summary
-        # (ej: "26" y "850" → "26850"). Se concatenan todos.
+        # El precio se parte en múltiples spans currencyInteger--summary
+        # ("26" + "850" → "26850"). querySelector() acota al primer producto
+        # de la página (evita mezclar spans de varios cards en búsqueda).
         precio_con_desc_raw = _js(
             page,
-            "[...document.querySelectorAll("
-            "'.vtex-product-price-1-x-sellingPriceValue--summary "
-            ".vtex-product-price-1-x-currencyInteger--summary')]"
-            ".map(el => el.innerText.trim()).join('')"
+            "(()=>{"
+            "  const c=document.querySelector("
+            "    '.vtex-product-price-1-x-sellingPriceValue--summary');"
+            "  return c ? [...c.querySelectorAll("
+            "    '.vtex-product-price-1-x-currencyInteger--summary')]"
+            "    .map(e=>e.innerText.trim()).join('') : '';"
+            "})()"
         )
         precio_sin_desc_raw = _js(
             page,
-            "[...document.querySelectorAll("
-            "'.vtex-product-price-1-x-listPriceValue--summary "
-            ".vtex-product-price-1-x-currencyInteger--summary')]"
-            ".map(el => el.innerText.trim()).join('')"
+            "(()=>{"
+            "  const c=document.querySelector("
+            "    '.vtex-product-price-1-x-listPriceValue--summary');"
+            "  return c ? [...c.querySelectorAll("
+            "    '.vtex-product-price-1-x-currencyInteger--summary')]"
+            "    .map(e=>e.innerText.trim()).join('') : '';"
+            "})()"
         )
 
         precio_con_desc = _extraer_precio_entero(str(precio_con_desc_raw or ""))
