@@ -36,6 +36,7 @@ def hu00_despliegue_ambiental() -> tuple:
     try:
         cfg_base = obtener_config()
         out_config.update(cfg_base)
+        out_config["_debug"] = os.environ.get("RPA_DEBUG", "").lower() == "true"
         esquema      = out_config.get("Scheme", "[ShoppingDePrecios]")
         tabla_params = "[Parametros]"
 
