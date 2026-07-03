@@ -433,7 +433,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 5: Bucle principal de scraping con Playwright
         # ----------------------------------------------------------------
-        headless   = str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        debug      = in_config.get("_debug", False)
+        headless   = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
         proxy_url  = _proxy_sistema_windows()
         proxy_cfg  = {"server": proxy_url} if proxy_url else None
 
@@ -738,7 +739,12 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     """)
 
     conn.commit()
+    conn.close()
 
+    # Conexion fresca para el SELECT final: evita que el estado residual
+    # de los cursores de UPDATE corrompa cursor.description en pyodbc.
+    conn   = conectar_bd(in_config)
+    cursor = conn.cursor()
     cursor.execute(f"""
         SELECT
             [FechaInicio]        AS fechainsumo,
@@ -768,7 +774,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     if not filas:
         return
 
-    df = pd.DataFrame(filas, columns=cols)
+    df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
     ruta_reporte     = in_config.get("RutaReporte", "")
     os.makedirs(ruta_reporte, exist_ok=True)

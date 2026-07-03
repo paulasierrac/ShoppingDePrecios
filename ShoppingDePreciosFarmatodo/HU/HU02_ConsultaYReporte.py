@@ -618,6 +618,9 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
           AND TRY_CAST(PrecioSinDescuento AS FLOAT) != TRY_CAST(PrecioConDescuento AS FLOAT)
     """)
     conn.commit()
+    conn.close()
+    conn   = conectar_bd(in_config)
+    cursor = conn.cursor()
 
     cursor.execute(f"""
         SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],[Estado],
@@ -633,7 +636,7 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     if not filas:
         return
 
-    df = pd.DataFrame(filas, columns=cols)
+    df = pd.DataFrame([list(row) for row in filas], columns=cols)
     ruta_rep    = in_config.get("RutaReporte", "")
     os.makedirs(ruta_rep, exist_ok=True)
     nombre_res  = in_config.get("NombreResultado", "ReportePricing")

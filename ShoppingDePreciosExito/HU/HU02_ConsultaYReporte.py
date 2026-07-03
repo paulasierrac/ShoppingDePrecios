@@ -937,6 +937,9 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
           AND TRY_CAST([PrecioSinDescuento] AS INT) != TRY_CAST([PrecioConDescuento] AS INT)
     """)
     conn.commit()
+    conn.close()
+    conn   = conectar_bd(in_config)
+    cursor = conn.cursor()
 
     # Consultar datos para el reporte
     cursor.execute(f"""
@@ -968,7 +971,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
     if not filas:
         return
 
-    df = pd.DataFrame(filas, columns=cols)
+    df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
     ruta_reporte     = in_config.get("RutaReporte", "")
     os.makedirs(ruta_reporte, exist_ok=True)
