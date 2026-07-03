@@ -134,7 +134,8 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
 
 def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                           url_template: str, ruta_screenshot: str,
-                          in_config: dict, task_name: str) -> dict:
+                          in_config: dict, task_name: str,
+                          primer_ean: bool = False) -> dict:
     resultado = {
         "nombre_prd":          "",
         "marca":               "",
@@ -151,15 +152,39 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        try:
-            page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-        except Exception as nav_err:
-            write_log("Warning",
-                      f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
-                      task_name, in_config)
-            return resultado
-
-        page.wait_for_timeout(ESPERA_CARGA)
+        if primer_ean:
+            # Primer EAN del lote: navegar a la URL para abrir la capa Doofinder
+            try:
+                page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
+            except Exception as nav_err:
+                write_log("Warning",
+                          f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
+                          task_name, in_config)
+                return resultado
+            page.wait_for_timeout(ESPERA_CARGA)
+        else:
+            # EANs siguientes: reusar la pagina y buscar via el input de Doofinder.
+            # Crear nueva pagina por EAN genera ERR_ABORTED porque Cafam usa
+            # Phoenix LiveView (WebSocket) que interpreta multiples conexiones
+            # nuevas como bot y aborta las peticiones.
+            try:
+                page.triple_click('.dfd-searchbox-input')
+                page.keyboard.type(ean, delay=30)
+                page.keyboard.press('Enter')
+                page.wait_for_timeout(ESPERA_CARGA)
+            except Exception as search_err:
+                write_log("Warning",
+                          f"HU02: Error buscando EAN ({ean}) via input Doofinder: {search_err}",
+                          task_name, in_config)
+                # Fallback: navegacion completa
+                try:
+                    page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
+                    page.wait_for_timeout(ESPERA_CARGA)
+                except Exception as nav_err:
+                    write_log("Warning",
+                              f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
+                              task_name, in_config)
+                    return resultado
 
         # ── Detectar "sin resultados" via clase CSS ───────────────────────
         # Cafam usa Doofinder: cuando el EAN no existe muestra div.dfd-no-results
@@ -502,8 +527,9 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
             ignore_https_errors=True,
         )
 
+        page = context.new_page()
         try:
-            for row in registros:
+            for i, row in enumerate(registros):
                 id_t, ean, kw = str(row[0]), str(row[1]), str(row[2] or "")
                 ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
 
@@ -514,17 +540,8 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
                 conn.close()
 
                 write_log("Info", f"HU02: Consultando EAN ({ean})", task_name, in_config)
-                # Pagina nueva por EAN: Cafam usa Doofinder con Phoenix LiveView
-                # (WebSocket). Si se reutiliza la pagina, el estado Doofinder
-                # queda con los resultados del EAN anterior y no se refresca.
-                page = context.new_page()
-                try:
-                    res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
-                finally:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
+                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name,
+                                           primer_ean=(i == 0))
                 _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name)
         finally:
             try:
@@ -575,8 +592,9 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         ignore_https_errors=True,
     )
 
+    page = context.new_page()
     try:
-        for row in registros:
+        for i, row in enumerate(registros):
             id_t = str(row[0])
             ean  = str(row[1])
             desc = str(row[2] or "")
@@ -584,16 +602,8 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             kw   = m.group(0) if m else ""
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
-            # Pagina nueva por EAN: Doofinder/Phoenix LiveView no refresca
-            # su estado si se reutiliza la misma pagina entre busquedas.
-            page = context.new_page()
-            try:
-                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name)
-            finally:
-                try:
-                    page.close()
-                except Exception:
-                    pass
+            res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name,
+                                       primer_ean=(i == 0))
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
             resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
     finally:
