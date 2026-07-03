@@ -677,10 +677,9 @@ def _generar_reportes(in_config: dict, esquema: str,
 
     cursor.execute(f"""
         SELECT DISTINCT(FechaInicio),
-            REPLACE(CONCAT(
-                REPLACE(CAST(FechaInicio AS DATE),'-','_'),
-                REPLACE(REPLACE(SUBSTRING(CAST(FechaInicio AS varchar),12,6),' ','_'),':','_')
-            ),'__','_0')
+            CONVERT(varchar(8), FechaInicio, 112)
+            + '_'
+            + REPLACE(LEFT(CONVERT(varchar(8), FechaInicio, 108), 5), ':', '_')
         FROM {esquema}.{tabla_ex}
         WHERE Estado='2' OR Estado='99'
     """)
