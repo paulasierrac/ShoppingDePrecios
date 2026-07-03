@@ -17,6 +17,9 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 _DEBUG = os.environ.get("RPA_DEBUG", "").lower() in ("1", "true", "si", "yes")
 
 _PHARMACY_ROOT = Path(__file__).resolve().parent

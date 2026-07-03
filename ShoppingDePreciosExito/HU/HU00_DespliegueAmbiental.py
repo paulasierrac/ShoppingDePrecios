@@ -97,7 +97,9 @@ def hu00_despliegue_ambiental() -> tuple:
         out_config.setdefault("MesesLimpiezaScreenshots",  "12")
         out_config.setdefault("MesesLimpiezaReportes",     "12")
         out_config.setdefault("MesesLimpiezaInsumos",      "12")
-        out_config.setdefault("NombreResultado",           "ReportePricing")
+        out_config.setdefault("NombreResultado",           "ReportePricingExito_")
+        if out_config.get("NombreResultado") == "ReportePricing":
+            out_config["NombreResultado"] = "ReportePricingExito_"
         out_config.setdefault("CantExito",                 "100")
         out_config.setdefault("SegExito",                  "10")
 
