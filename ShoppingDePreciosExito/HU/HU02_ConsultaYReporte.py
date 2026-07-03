@@ -476,7 +476,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 6: Generacion de reportes
         # ----------------------------------------------------------------
-        _generar_reportes(in_config, esquema, tabla_ex, task_name)
+        _generar_reportes(in_config, esquema, tabla_ex, task_name, debug=debug)
 
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
@@ -662,7 +662,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
 # ============================================================
 
 def _generar_reportes(in_config: dict, esquema: str,
-                      tabla_ex: str, task_name: str) -> None:
+                      tabla_ex: str, task_name: str, debug: bool = False) -> None:
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
@@ -682,12 +682,12 @@ def _generar_reportes(in_config: dict, esquema: str,
         fecha_inicio = str(fecha_row[0])[:23]
         fecha_sello  = str(fecha_row[1])
         _generar_reporte_fecha(in_config, esquema, tabla_ex,
-                               fecha_inicio, fecha_sello, task_name)
+                               fecha_inicio, fecha_sello, task_name, debug=debug)
 
 
 def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
                            fecha_inicio: str, fecha_sello: str,
-                           task_name: str) -> None:
+                           task_name: str, debug: bool = False) -> None:
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
@@ -784,7 +784,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
     nombre_resultado = in_config.get("NombreResultado",     "ReportePricingExito_")
     nombre_hoja      = in_config.get("NombreHojaResultado", "ReportePricingExito")
 
-    if in_config.get("_debug"):
+    if debug:
         ruta_reporte = str(_PROJECT_ROOT / "debug")
         ruta_excel   = os.path.join(ruta_reporte, f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx")
     else:
