@@ -30,11 +30,10 @@ Flujo principal:
      exporta un Excel y envia el correo de resultado.
 
 Modo debug (in_config["_debug"] = True):
-  - PASO 1: INSERT omitido; los EANs se toman directo de TicketInsumo.
-  - PASO 4: Sin UPDATE en BD; resultados en memoria. Chrome visible.
-            Solo procesa los primeros N EANs (LoteDebug, defecto=3).
-  - PASO 5: UPDATE de precios omitido.
-  - PASO 6: Excel generado en ./debug/ local; sin correo ni cambio de estado.
+  - Mismo flujo que produccion; escribe en la BD de desarrollo (Dev-*).
+  - Chrome visible (no headless).
+  - Screenshots en ./debug/screenshots/Exito/.
+  - Reporte Excel en ./debug/ (prefijo DEBUG_); correo enviado normalmente.
 
 URL de busqueda: {UrlExito}  (ej: https://www.exito.com/s?q=REEMPLAZAR&sort=score_desc&page=0)
 """
@@ -338,7 +337,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
     write_log("Info", "Inicia HU02", task_name, in_config)
     if debug:
-        write_log("Info", "[DEBUG] Modo debug activo: sin escrituras en BD ni correos", task_name, in_config)
+        write_log("Info", "[DEBUG] Modo debug activo: Chrome visible, BD Dev, reportes en ./debug/", task_name, in_config)
 
     pw_instance = None
     browser     = None
@@ -351,69 +350,54 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         maquina      = socket.gethostname()
 
         # ----------------------------------------------------------------
-        # PASO 1 + PASO 2: Verificar registros (debug → SQLite / normal → SQL Server)
+        # PASO 1 + PASO 2: INSERT en TablaExito y verificar pendientes
         # ----------------------------------------------------------------
-        if debug:
-            conn_sq = conectar_bd_debug(in_config)
-            cur_sq  = conn_sq.cursor()
-            cur_sq.execute(f"SELECT COUNT(*) FROM {esquema}.{tabla_ins} WHERE Estado=1")
-            cnt = cur_sq.fetchone()[0] or 0
-            conn_sq.close()
-            hay_pendientes = cnt > 0
-            if hay_pendientes:
-                write_log("Info",
-                          f"[DEBUG] {cnt} registros en BD Dev ({tabla_ins}) con Estado=1",
-                          task_name, in_config)
-            else:
-                write_log("Info",
-                          f"[DEBUG] No hay registros en BD Dev ({tabla_ins}) con Estado=1",
-                          task_name, in_config)
-        else:
-            conn   = conectar_bd(in_config)
-            cursor = conn.cursor()
+        _conn_fn = conectar_bd_debug if debug else conectar_bd
+        conn   = _conn_fn(in_config)
+        cursor = conn.cursor()
 
-            # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
+        # PASO 1: Insertar en TablaExito los IDs nuevos de TicketInsumo
+        cursor.execute(f"""
+            DELETE b FROM {esquema}.{tabla_ex} b
+            JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+            WHERE b.FechaInicio < a.FechaInicio
+        """)
+        cursor.execute(f"""
+            SELECT a.Id
+            FROM {esquema}.{tabla_ins} a
+            LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
+            WHERE b.Id IS NULL AND a.Estado='1'
+        """)
+        if cursor.fetchone() is not None:
+            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
             cursor.execute(f"""
-                DELETE b FROM {esquema}.{tabla_ex} b
-                JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
-                WHERE b.FechaInicio < a.FechaInicio
-            """)
-            cursor.execute(f"""
-                SELECT a.Id
+                INSERT INTO {esquema}.{tabla_ex}
+                    ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
+                     [Estado],[Maquina],[PLU],[EAN],[Descripcion],
+                     [MarcaProducto],[NombrePrd],[RegistroInvima],
+                     [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
+                     [Porc.Descuento],[PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen])
+                SELECT
+                    a.[Id], a.[FechaInicio], GETDATE(), NULL,
+                    '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
+                    '','','','','','','','','','',''
                 FROM {esquema}.{tabla_ins} a
                 LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                 WHERE b.Id IS NULL AND a.Estado='1'
             """)
-            if cursor.fetchone() is not None:
-                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
-                cursor.execute(f"""
-                    INSERT INTO {esquema}.{tabla_ex}
-                        ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
-                         [Estado],[Maquina],[PLU],[EAN],[Descripcion],
-                         [MarcaProducto],[NombrePrd],[RegistroInvima],
-                         [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
-                         [Porc.Descuento],[PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen])
-                    SELECT
-                        a.[Id], a.[FechaInicio], GETDATE(), NULL,
-                        '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
-                        '','','','','','','','','','',''
-                    FROM {esquema}.{tabla_ins} a
-                    LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
-                    WHERE b.Id IS NULL AND a.Estado='1'
-                """)
-                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
-                write_log("Info",
-                          f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_ex})",
-                          task_name, in_config)
+            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
+            write_log("Info",
+                      f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_ex})",
+                      task_name, in_config)
 
-            # PASO 2: Verificar si hay registros pendientes
-            cursor.execute(f"""
-                SELECT TOP(1) 1 FROM {esquema}.{tabla_ex}
-                WHERE Estado='1' OR Estado='2' OR Estado='99'
-            """)
-            hay_pendientes = cursor.fetchone() is not None
-            conn.commit()
-            conn.close()
+        # PASO 2: Verificar si hay registros pendientes
+        cursor.execute(f"""
+            SELECT TOP(1) 1 FROM {esquema}.{tabla_ex}
+            WHERE Estado='1' OR Estado='2' OR Estado='99'
+        """)
+        hay_pendientes = cursor.fetchone() is not None
+        conn.commit()
+        conn.close()
 
         if not hay_pendientes:
             write_log("Info", "HU02: No existen registros para consultar en pagina", task_name, in_config)
@@ -463,43 +447,36 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             ]
         )
 
-        if debug:
-            _ejecutar_scraping_debug(
-                browser, in_config, esquema, tabla_ins, url_template,
-                ruta_screenshots, task_name
-            )
-        else:
-            _ejecutar_scraping_normal(
-                browser, in_config, esquema, tabla_ex, tabla_ins, url_template,
-                ruta_screenshots, maquina, task_name
-            )
+        _ejecutar_scraping_normal(
+            browser, in_config, esquema, tabla_ex, tabla_ins, url_template,
+            ruta_screenshots, maquina, task_name,
+            _conectar=_conn_fn,
+        )
 
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 5: Limpieza de puntos de miles en columnas de precio
         # ----------------------------------------------------------------
-        if not debug:
-            conn   = conectar_bd(in_config)
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                UPDATE {esquema}.{tabla_ex}
-                SET [PrecioConDescuento] = REPLACE([PrecioConDescuento], '.', '')
-                WHERE Estado='2' OR Estado='100'
-            """)
-            cursor.execute(f"""
-                UPDATE {esquema}.{tabla_ex}
-                SET [PrecioSinDescuento] = REPLACE([PrecioSinDescuento], '.', '')
-                WHERE Estado='2' OR Estado='100'
-            """)
-            conn.commit()
-            conn.close()
+        conn   = _conn_fn(in_config)
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE {esquema}.{tabla_ex}
+            SET [PrecioConDescuento] = REPLACE([PrecioConDescuento], '.', '')
+            WHERE Estado='2' OR Estado='100'
+        """)
+        cursor.execute(f"""
+            UPDATE {esquema}.{tabla_ex}
+            SET [PrecioSinDescuento] = REPLACE([PrecioSinDescuento], '.', '')
+            WHERE Estado='2' OR Estado='100'
+        """)
+        conn.commit()
+        conn.close()
 
         # ----------------------------------------------------------------
         # PASO 6: Generacion de reportes
         # ----------------------------------------------------------------
-        if not debug:
-            _generar_reportes(in_config, esquema, tabla_ex, task_name)
+        _generar_reportes(in_config, esquema, tabla_ex, task_name)
 
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
@@ -528,13 +505,16 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 # ============================================================
 
 def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
-                               url_template, ruta_screenshots, maquina, task_name):
+                               url_template, ruta_screenshots, maquina, task_name,
+                               _conectar=None):
+    if _conectar is None:
+        _conectar = conectar_bd
     lote  = int(in_config.get("CantExito", str(_LOTE_DEFAULT)))
     delay = int(in_config.get("SegExito",  "5"))
 
     hay_mas = True
     while hay_mas:
-        conn   = conectar_bd(in_config)
+        conn   = _conectar(in_config)
         cursor = conn.cursor()
 
         cursor.execute(f"""
@@ -576,7 +556,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                 ean           = str(row[1])
                 palabra_clave = str(row[2] or "")
 
-                conn   = conectar_bd(in_config)
+                conn   = _conectar(in_config)
                 cursor = conn.cursor()
                 cursor.execute(f"""
                     UPDATE {esquema}.{tabla_ex}
@@ -605,7 +585,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                     task_name=task_name,
                 )
 
-                conn   = conectar_bd(in_config)
+                conn   = _conectar(in_config)
                 cursor = conn.cursor()
 
                 estado      = res["estado"]
@@ -666,7 +646,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
             except Exception:
                 pass
 
-        conn   = conectar_bd(in_config)
+        conn   = _conectar(in_config)
         cursor = conn.cursor()
         cursor.execute(f"SELECT TOP(1) 1 FROM {esquema}.{tabla_ex} WHERE Estado='1'")
         hay_mas = cursor.fetchone() is not None
@@ -678,179 +658,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
 
 
 # ============================================================
-# Scraping modo debug (sin escritura en BD)
-# ============================================================
-
-def _ejecutar_scraping_debug(browser, in_config, esquema, tabla_ins,
-                              url_template, ruta_screenshots, task_name):
-    """
-    Lee EANs de pruebas.db (TicketInsumo), hace el scraping, escribe
-    resultados en pruebas.db (Exito) y genera Excel en ./debug/.
-    No toca SQL Server.
-    """
-    lote_debug = int(in_config.get("LoteDebug", "3"))
-
-    conn_sq = conectar_bd_debug(in_config)
-    cur_sq  = conn_sq.cursor()
-    cur_sq.execute(
-        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
-        (lote_debug,)
-    )
-    registros = cur_sq.fetchall()
-
-    if not registros:
-        write_log("Info", "[DEBUG] No hay registros en pruebas.db TicketInsumo con Estado=1", task_name, in_config)
-        conn_sq.close()
-        return
-
-    write_log("Info", f"[DEBUG] Procesando {len(registros)} EAN(s) (LoteDebug={lote_debug})", task_name, in_config)
-    print(f"\n{'─'*70}")
-    print(f"  [DEBUG] Procesando {len(registros)} EAN(s)")
-    print(f"{'─'*70}")
-
-    resultados = []
-
-    context = browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        locale="es-CO",
-        viewport={"width": 1920, "height": 1080},
-        ignore_https_errors=True,
-    )
-    page = context.new_page()
-
-    try:
-        for row in registros:
-            id_ticket   = str(row[0])
-            ean         = str(row[1])
-            descripcion = str(row[2] or "")
-            m = re.search(r'[a-zA-Z]{3,}', descripcion)
-            palabra_clave = m.group(0) if m else ""
-            ruta_ss       = os.path.join(ruta_screenshots, f"{ean}_{id_ticket}.jpg")
-
-            write_log(
-                "Info",
-                f"[DEBUG] Consultando EAN ({ean}) — {descripcion[:60]}",
-                task_name, in_config
-            )
-            print(f"\n  EAN: {ean}  |  Descripcion: {descripcion[:50]}")
-
-            res = _consultar_ean_exito(
-                page=page,
-                ean=ean,
-                palabra_clave=palabra_clave,
-                url_template=url_template,
-                ruta_screenshot=ruta_ss,
-                in_config=in_config,
-                task_name=task_name,
-            )
-
-            estado_label = {
-                "2":  "ENCONTRADO",
-                "3":  "SIN COINCIDENCIA",
-                "99": "SIN INFORMACION",
-            }.get(res["estado"], res["estado"])
-
-            print(f"  Estado    : {res['estado']} ({estado_label})")
-            if res["nombre_prd"]:
-                print(f"  Nombre    : {res['nombre_prd']}")
-            if res["marca"]:
-                print(f"  Marca     : {res['marca']}")
-            if res["precio_con_desc"]:
-                print(f"  Precio    : {res['precio_con_desc']}")
-            if res["precio_sin_desc"]:
-                print(f"  Precio s/d: {res['precio_sin_desc']}")
-            if res["url_producto"]:
-                print(f"  URL       : {res['url_producto']}")
-            if res["observaciones"]:
-                print(f"  Obs       : {res['observaciones']}")
-
-            resultados.append({
-                "Id":                 id_ticket,
-                "EAN":                ean,
-                "Descripcion":        descripcion,
-                "Estado":             res["estado"],
-                "NombrePrd":          res["nombre_prd"],
-                "MarcaProducto":      res["marca"],
-                "PrecioConDescuento": res["precio_con_desc"],
-                "PrecioSinDescuento": res["precio_sin_desc"],
-                "PrecioFidelizacion": res["precio_fidelizacion"],
-                "Porc.Descuento":     res["porc_descuento"],
-                "PrecioUnitario":     res["precio_unitario"],
-                "UrlProducto":        res["url_producto"],
-                "RutaImagen":         ruta_ss,
-                "Observaciones":      res["observaciones"],
-            })
-
-    finally:
-        try:
-            context.close()
-        except Exception:
-            pass
-
-    # Guardar resultados en pruebas.db (tabla Exito)
-    if resultados:
-        ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        maquina = socket.gethostname()
-        cur_sq.execute(f"DELETE FROM {esquema}.Exito")
-        for r in resultados:
-            cur_sq.execute(
-                f"INSERT INTO {esquema}.Exito "
-                "(FechaInicio, FechaModificacion, FechaFin, Estado, Reintentos, Maquina, "
-                " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
-                " BannerProducto, UrlProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (ahora, ahora, ahora,
-                 r["Estado"], 0, maquina,
-                 "", r["EAN"], r["Descripcion"], "", ahora,
-                 r["MarcaProducto"], r["NombrePrd"], "",
-                 r["PrecioUnitario"], r["PrecioConDescuento"], r["PrecioSinDescuento"],
-                 r["Porc.Descuento"], r["PrecioFidelizacion"],
-                 "", r["UrlProducto"], r["RutaImagen"])
-            )
-        conn_sq.commit()
-        write_log("Info",
-                  f"[DEBUG] {len(resultados)} registros guardados en BD Dev ({esquema}.Exito)",
-                  task_name, in_config)
-    conn_sq.close()
-
-    # Generar Excel de debug
-    _generar_reporte_debug(in_config, resultados, task_name)
-
-    print(f"\n{'─'*70}")
-    print(f"  [DEBUG] Resumen: {sum(1 for r in resultados if r['Estado']=='2')} encontrados, "
-          f"{sum(1 for r in resultados if r['Estado']=='99')} sin info, "
-          f"{sum(1 for r in resultados if r['Estado']=='3')} sin coincidencia")
-    print(f"{'─'*70}\n")
-
-
-def _generar_reporte_debug(in_config: dict, resultados: list, task_name: str) -> None:
-    """Genera un Excel local en ./debug/ con los resultados del modo debug."""
-    if not resultados:
-        write_log("Info", "[DEBUG] Sin resultados para reporte", task_name, in_config)
-        return
-
-    ruta_debug = _PROJECT_ROOT / "debug"
-    ruta_debug.mkdir(exist_ok=True)
-
-    sello        = datetime.now().strftime("%Y%m%d_%H%M%S")
-    nombre_excel = f"DEBUG_ReportePricingExito_{sello}.xlsx"
-    ruta_excel   = str(ruta_debug / nombre_excel)
-
-    df = pd.DataFrame(resultados)
-    with pd.ExcelWriter(ruta_excel, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Debug", index=False)
-
-    write_log("Info", f"[DEBUG] Reporte generado en ({ruta_excel})", task_name, in_config)
-    print(f"\n  Reporte debug: {ruta_excel}")
-
-
-# ============================================================
-# Generacion de reportes Excel (modo normal)
+# Generacion de reportes Excel
 # ============================================================
 
 def _generar_reportes(in_config: dict, esquema: str,
