@@ -148,7 +148,20 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
     url_consulta = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        page.goto(url_consulta, wait_until="domcontentloaded", timeout=30000)
+        # Capturar errores HTTP (4xx/5xx) por separado para no dejar la pagina
+        # en estado chrome-error:// y arrastrar el fallo a los EANs siguientes.
+        try:
+            page.goto(url_consulta, wait_until="domcontentloaded", timeout=60000)
+        except Exception as nav_err:
+            write_log("Warning",
+                      f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
+                      task_name, in_config)
+            try:
+                page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+            return resultado
+
         page.wait_for_timeout(ESPERA_5S)
 
         # ── Obtener URL del primer producto en resultados ──────────────

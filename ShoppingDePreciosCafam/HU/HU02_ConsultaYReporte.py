@@ -151,8 +151,42 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
+        # Algunos EANs generan errores HTTP en Cafam; los capturamos para
+        # no dejar la pagina en estado chrome-error:// y arrastrar el fallo
+        # a los EANs siguientes.
+        try:
+            page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
+        except Exception as nav_err:
+            write_log("Warning",
+                      f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
+                      task_name, in_config)
+            try:
+                page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+            return resultado
+
         page.wait_for_timeout(ESPERA_CARGA)
+
+        # ── Detectar "sin resultados" ─────────────────────────────────────
+        # Cuando el EAN no existe Cafam muestra "Prueba de nuevo con otra
+        # busqueda" y debajo "Productos recomendados" con articulos NO
+        # relacionados. Hay que descartarlos antes de leer dfd-card-link.
+        try:
+            sin_resultados = page.evaluate("""
+                (() => {
+                    const t = (document.body?.textContent || '').toLowerCase();
+                    return t.includes('prueba de nuevo') || t.includes('nueva b\\u00fasqueda');
+                })()
+            """) or False
+        except Exception:
+            sin_resultados = False
+
+        if sin_resultados:
+            write_log("Info", f"HU02: EAN ({ean}) — Sin resultados en Cafam",
+                      task_name, in_config)
+            _tomar_screenshot(page, ruta_screenshot)
+            return resultado
 
         # ── Paso 1: Tomar el primer resultado de busqueda ─────────────────
         # Cafam usa slugs/IDs internos en la URL — el EAN nunca aparece en ella.
