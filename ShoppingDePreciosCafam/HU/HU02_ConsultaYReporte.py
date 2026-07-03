@@ -151,33 +151,29 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
 
     try:
-        # Algunos EANs generan errores HTTP en Cafam; los capturamos para
-        # no dejar la pagina en estado chrome-error:// y arrastrar el fallo
-        # a los EANs siguientes.
         try:
             page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
         except Exception as nav_err:
             write_log("Warning",
                       f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
                       task_name, in_config)
-            page.wait_for_timeout(1500)
             return resultado
 
         page.wait_for_timeout(ESPERA_CARGA)
 
-        # ── Detectar "sin resultados" ─────────────────────────────────────
-        # Cuando el EAN no existe Cafam muestra "Prueba de nuevo con otra
-        # busqueda" y debajo "Productos recomendados" con articulos NO
-        # relacionados. Hay que descartarlos antes de leer dfd-card-link.
-        try:
-            sin_resultados = page.evaluate("""
-                (() => {
-                    const t = (document.body?.textContent || '').toLowerCase();
-                    return t.includes('prueba de nuevo') || t.includes('nueva b\\u00fasqueda');
-                })()
-            """) or False
-        except Exception:
-            sin_resultados = False
+        # ── Detectar "sin resultados" via clase CSS ───────────────────────
+        # Cafam usa Doofinder: cuando el EAN no existe muestra div.dfd-no-results
+        # con "Productos recomendados" que tambien tienen dfd-card-link y
+        # dfd-card-title. Detectar por clase es mas fiable que por texto.
+        sin_resultados = False
+        for _ in range(3):
+            try:
+                sin_resultados = page.evaluate(
+                    "!!document.querySelector('.dfd-no-results')"
+                ) or False
+                break
+            except Exception:
+                page.wait_for_timeout(ESPERA_REINT)
 
         if sin_resultados:
             write_log("Info", f"HU02: EAN ({ean}) — Sin resultados en Cafam",
@@ -185,89 +181,117 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             _tomar_screenshot(page, ruta_screenshot)
             return resultado
 
-        # ── Paso 1: Tomar el primer resultado de busqueda ─────────────────
-        # Cafam usa slugs/IDs internos en la URL — el EAN nunca aparece en ella.
-        # La busqueda por EAN retorna solo el producto correcto, asi que
-        # tomamos el primer resultado sin validar el EAN en la URL.
-        url_producto = ""
-        nombre_prd   = ""
-
-        for intento in range(3):
+        # ── Extraer datos de la primera tarjeta de resultado ─────────────
+        # La tarjeta ya contiene precio (data-value), marca (input hidden) y
+        # disponibilidad (data-item JSON). No hace falta navegar al detalle.
+        # Se excluyen tarjetas dentro de .dfd-no-results (recomendados).
+        datos = None
+        for _ in range(3):
             try:
-                url_pos = page.evaluate(
-                    "document.getElementsByClassName('dfd-card-link').item(0)?.href || ''"
-                ) or ""
-                nombre_pos = page.evaluate(
-                    "document.getElementsByClassName('dfd-card-title').item(0)?.title || ''"
-                ) or ""
-                if url_pos:
-                    url_producto = url_pos
-                    nombre_prd   = nombre_pos
-                    break
-                if intento < 2:
-                    page.wait_for_timeout(ESPERA_REINT)
-            except Exception as e:
-                if intento < 2:
-                    page.wait_for_timeout(ESPERA_REINT)
-                else:
-                    write_log("Warning", f"HU02: JS error buscando tarjeta: {e}", task_name, in_config)
+                datos = page.evaluate("""
+                    (() => {
+                        // Primera tarjeta fuera del bloque "sin resultados"
+                        const card = document.querySelector(
+                            '.dfd-card-live:not(.dfd-no-results .dfd-card-live)'
+                        );
+                        if (!card) return null;
 
-        if not url_producto:
-            write_log("Info", f"HU02: EAN ({ean}) — No encontrado en resultados de busqueda",
+                        const titulo = card.querySelector('.dfd-card-title')
+                                          ?.getAttribute('title')
+                                    || card.querySelector('.dfd-card-title')
+                                          ?.innerText?.trim() || '';
+                        const url    = card.querySelector('.dfd-card-link')?.href || '';
+                        const marca  = card.querySelector('input[name="item_brand"]')
+                                          ?.value || '';
+                        const pum    = card.querySelector('.dfd-card-pum')
+                                          ?.innerText?.trim() || '';
+
+                        // Precios desde data-value (evita parsear "$17,080" o "9.81e4")
+                        const saleEl  = card.querySelector('.dfd-card-price--sale');
+                        const regEl   = card.querySelector('.dfd-card-price');
+                        const saleVal = saleEl
+                            ? parseFloat(saleEl.getAttribute('data-value') || '0') : 0;
+                        const regVal  = regEl
+                            ? parseFloat(regEl.getAttribute('data-value')  || '0') : 0;
+
+                        // Disponibilidad desde JSON del boton agregar
+                        let availability = 'in stock';
+                        try {
+                            const btn  = card.querySelector(
+                                'button[data-role="add_to_cart"]');
+                            const item = JSON.parse(
+                                btn?.getAttribute('data-item') || '{}');
+                            availability = (item.availability || 'in stock')
+                                .toLowerCase();
+                        } catch(e) {}
+
+                        return {
+                            titulo:       titulo,
+                            url:          url,
+                            marca:        marca,
+                            precio_sin:   regVal  > 0
+                                ? Math.round(regVal).toString()  : '',
+                            precio_con:   saleVal > 0
+                                ? Math.round(saleVal).toString() : '',
+                            pum:          pum,
+                            availability: availability
+                        };
+                    })()
+                """)
+                if datos and datos.get("url"):
+                    break
+                page.wait_for_timeout(ESPERA_REINT)
+            except Exception as e:
+                write_log("Warning", f"HU02: JS error leyendo tarjeta EAN ({ean}): {e}",
+                          task_name, in_config)
+                page.wait_for_timeout(ESPERA_REINT)
+
+        if not datos or not datos.get("url"):
+            write_log("Info",
+                      f"HU02: EAN ({ean}) — No se encontro tarjeta de resultado",
                       task_name, in_config)
             _tomar_screenshot(page, ruta_screenshot)
             return resultado
 
+        nombre_prd   = datos["titulo"]
+        url_producto = datos["url"]
         resultado["url_producto"] = url_producto
 
-        # ── Paso 2: Validar nombre vs palabra clave ────────────────────────
+        # ── Validar nombre vs palabra clave ───────────────────────────────
         kw = (palabra_clave or "").upper().strip()
         if kw and kw not in nombre_prd.upper():
             write_log("Info",
-                      f"HU02: EAN ({ean}) — Sin coincidencia: nombre='{nombre_prd}', kw='{palabra_clave}'",
+                      f"HU02: EAN ({ean}) — Sin coincidencia: "
+                      f"nombre='{nombre_prd}', kw='{palabra_clave}'",
                       task_name, in_config)
             _tomar_screenshot(page, ruta_screenshot)
             resultado.update({
                 "nombre_prd":    nombre_prd,
                 "url_producto":  url_producto,
                 "estado":        "3",
-                "observaciones": "No existe coincidencia entre la informacion encontrada y el producto consultado",
+                "observaciones": (
+                    "No existe coincidencia entre la informacion "
+                    "encontrada y el producto consultado"
+                ),
             })
             return resultado
 
-        # ── Paso 3: Navegar a pagina de detalle ───────────────────────────
-        page.goto(url_producto, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(ESPERA_CARGA)
+        sin_stock = datos["availability"] not in ("in stock", "disponible", "")
+        precio_sin = datos["precio_sin"]
+        precio_con = datos["precio_con"]
 
-        # ── Paso 4: Extraer campos via JS (3 reintentos) ──────────────────
-        precio_con = precio_sin = marca = precio_unit = disponibilidad = ""
-        for intento in range(3):
-            precio_con     = _js_text(page, ".product-price span[itemprop='price']")
-            precio_sin     = _js_text(page, ".product-discount .regular-price")
-            marca          = _js_text(page, ".manufacturer-info-section .product-brand")
-            precio_unit    = _js_text(page, ".pum.pum_product_page")
-            disponibilidad = _js_text(page, ".add button[data-button-action='add-to-cart']")
-            if precio_con or precio_sin:
-                break
-            if intento < 2:
-                try:
-                    page.reload(wait_until="domcontentloaded", timeout=60000)
-                except Exception:
-                    pass
-                page.wait_for_timeout(ESPERA_REINT)
-
-        write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
+        write_log("Info",
+                  f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}' "
+                  f"precio_sin={precio_sin} precio_con={precio_con}",
                   task_name, in_config)
         _tomar_screenshot(page, ruta_screenshot)
 
-        sin_stock = "no disponible" in disponibilidad.lower()
-
         resultado.update({
             "nombre_prd":          nombre_prd,
-            "marca":               marca,
-            "precio_con_desc":     _limpiar_precio(precio_con),
-            "precio_sin_desc":     _limpiar_precio(precio_sin),
-            "precio_unitario":     precio_unit,
+            "marca":               datos["marca"],
+            "precio_con_desc":     precio_con,
+            "precio_sin_desc":     precio_sin,
+            "precio_unitario":     datos["pum"],
             "precio_fidelizacion": "",
             "url_producto":        url_producto,
             "banner":              "No disponible" if sin_stock else "",
