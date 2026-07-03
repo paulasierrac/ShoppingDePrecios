@@ -428,10 +428,18 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 4: Bucle principal de scraping
         # ----------------------------------------------------------------
+        if not url_template:
+            raise ValueError(
+                "HU02: Parametro 'UrlExito' no encontrado en BD. "
+                "Verificar tabla [ShoppingDePrecios].[Parametros]."
+            )
+
         headless  = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
         proxy_cfg = _proxy_sistema_windows()
 
         write_log("Info", "HU02: Inicia consulta de productos por EAN", task_name, in_config)
+        if debug:
+            write_log("Info", f"[DEBUG] URL template: {url_template}", task_name, in_config)
 
         _asegurar_chromium(in_config, task_name)
         pw_instance = sync_playwright().start()
@@ -535,6 +543,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
         conn.close()
 
         if not registros:
+            write_log("Info", "HU02: No hay registros con Estado=1 pendientes de consultar", task_name, in_config)
             hay_mas = False
             break
 
