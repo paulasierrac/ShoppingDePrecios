@@ -283,10 +283,21 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         resultado["disponibilidad"] = str(disponibilidad_raw or "Texto no encontrado")
 
         # ── Marca ─────────────────────────────────────────────────────
+        # En paginas de detalle, brandName coincide con el h1 del nombre.
+        # Se prueba primero el brand link de store-components (detalle)
+        # y se excluyen elementos H1 para no confundir marca con nombre.
         marca_raw = _js(
             page,
-            "document.querySelector("
-            "'.vtex-product-summary-2-x-brandName')?.innerText.trim()"
+            "(()=>{"
+            "  const sels=['vtex-store-components-3-x-productBrandLink',"
+            "               'vtex-store-components-3-x-productBrand a',"
+            "               'vtex-product-summary-2-x-brandName'];"
+            "  for(const c of sels){"
+            "    const el=document.querySelector('.'+c);"
+            "    if(el && el.tagName!=='H1') return el.innerText.trim();"
+            "  }"
+            "  return '';"
+            "})()"
         )
         resultado["marca"] = str(marca_raw or "")
 
@@ -397,6 +408,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
               AND [Observaciones]='Sin stock'
               AND Reintentos<={reintentos_r}
         """)
+        write_log("Info", f"HU02: Registros reactivados (sin stock): {cursor.rowcount}", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 2: Insertar en TablaLocatel los IDs nuevos de TicketInsumo
@@ -410,16 +422,17 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
             WHERE b.FechaInicio < a.FechaInicio
         """)
+        write_log("Info", f"HU02: Registros anteriores eliminados de {tabla_loc}: {cursor.rowcount}", task_name, in_config)
 
         cursor.execute(f"""
-            SELECT a.Id
-            FROM {esquema}.{tabla_ins} a
+            SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
             LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
             WHERE b.Id IS NULL AND a.Estado='1'
         """)
-        hay_nuevos = cursor.fetchone() is not None
+        cnt_nuevos = cursor.fetchone()[0]
+        write_log("Info", f"HU02: Nuevos registros para insertar en {tabla_loc}: {cnt_nuevos}", task_name, in_config)
 
-        if hay_nuevos:
+        if cnt_nuevos > 0:
             cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} ON")
             cursor.execute(f"""
                 INSERT INTO {esquema}.{tabla_loc}
@@ -440,22 +453,21 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 WHERE b.Id IS NULL AND a.Estado='1'
             """)
             cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} OFF")
-            write_log(
-                "Info",
-                f"HU02: Existen nuevos registros para cargar a la tabla ({tabla_loc})",
-                task_name, in_config
-            )
+            write_log("Info", f"HU02: Insertados {cursor.rowcount} registros en {tabla_loc}", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 3: Verificar si hay registros pendientes
         # ----------------------------------------------------------------
         cursor.execute(f"""
-            SELECT TOP(1) * FROM {esquema}.{tabla_loc}
+            SELECT COUNT(*) FROM {esquema}.{tabla_loc}
             WHERE Estado='1' OR Estado='2' OR Estado='99'
         """)
-        hay_pendientes = cursor.fetchone() is not None
+        cnt_pendientes = cursor.fetchone()[0]
+        hay_pendientes = cnt_pendientes > 0
         conn.commit()
         conn.close()
+
+        write_log("Info", f"HU02: Registros pendientes en {tabla_loc}: {cnt_pendientes}", task_name, in_config)
 
         if not hay_pendientes:
             write_log("Info", "HU02: No existen registros para consultar en pagina", task_name, in_config)
@@ -463,6 +475,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             return ""
 
         write_log("Info", "HU02: Existen registros que requieren consulta en la pagina", task_name, in_config)
+        if not url_template or "REEMPLAZAR" not in url_template:
+            write_log("Warning", f"HU02: URL template no contiene 'REEMPLAZAR': '{url_template}'", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 4: Estructura de carpetas de screenshots
@@ -509,24 +523,29 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
         hay_mas = True
         while hay_mas:
-            write_log(
-                "Info",
-                f"HU02: Se consultara un lote de ({lote}) productos.",
-                task_name, in_config
-            )
-
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
 
             cursor.execute(f"""
                 SELECT TOP({lote}) [Id], [EAN],
-                    LEFT(
-                        LTRIM(SUBSTRING(Descripcion,
-                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
-                        CHARINDEX(' ',
-                            LTRIM(SUBSTRING(Descripcion,
-                                PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
-                            + ' ') - 1
+                    ISNULL(
+                        NULLIF(
+                            LEFT(
+                                LTRIM(SUBSTRING(Descripcion,
+                                    PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
+                                CASE
+                                    WHEN CHARINDEX(' ',
+                                        LTRIM(SUBSTRING(Descripcion,
+                                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
+                                        + ' ') > 1
+                                    THEN CHARINDEX(' ',
+                                        LTRIM(SUBSTRING(Descripcion,
+                                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
+                                        + ' ') - 1
+                                    ELSE LEN(Descripcion)
+                                END
+                            ), ''
+                        ), ''
                     ),
                     [PLU]
                 FROM {esquema}.{tabla_loc}
@@ -534,6 +553,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             """)
             registros = cursor.fetchall()
             conn.close()
+
+            write_log("Info", f"HU02: Lote scraping obtenido: {len(registros)} registros con Estado=1", task_name, in_config)
 
             if not registros:
                 hay_mas = False
@@ -549,107 +570,128 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=True
             )
-            page = context.new_page()
 
             for i, row in enumerate(registros):
                 id_ticket     = str(row[0])
                 ean           = str(row[1])
                 palabra_clave = str(row[2] or "")
 
-                conn   = conectar_bd(in_config)
-                cursor = conn.cursor()
-                cursor.execute(f"""
-                    UPDATE {esquema}.{tabla_loc}
-                    SET FechaModificacion=GETDATE()
-                    WHERE Id='{id_ticket}'
-                """)
-                conn.commit()
-                conn.close()
-
-                ruta_ss = os.path.join(
-                    ruta_screenshots,
-                    f"{ean}_{id_ticket}.jpg"
-                )
-
-                write_log(
-                    "Info",
-                    f"HU02: Se consultara el EAN ({ean}) en la ruta "
-                    f"({url_template.replace('REEMPLAZAR', ean)})",
-                    task_name, in_config
-                )
-
-                resultado = _consultar_ean(
-                    page=page,
-                    ean=ean,
-                    palabra_clave=palabra_clave,
-                    url_template=url_template,
-                    ruta_screenshot=ruta_ss,
-                    in_config=in_config,
-                    task_name=task_name,
-                    primer_ean=(i == 0),
-                )
-
-                conn   = conectar_bd(in_config)
-                cursor = conn.cursor()
-                estado        = resultado["estado"]
-                observaciones = resultado["observaciones"][:250].replace("'", "''")
-                titulo        = resultado["titulo"].replace(";", "").replace("'", "''")
-                marca         = resultado["marca"].replace("'", "''")
-                precio_sin    = resultado["precio_sin_desc"]
-                precio_con    = resultado["precio_con_desc"]
-                url_prd       = resultado["url_producto"].replace("'", "''")
-                ruta_img      = ruta_ss.replace("'", "''")
-
-                if estado == "99":
+                try:
+                    conn   = conectar_bd(in_config)
+                    cursor = conn.cursor()
                     cursor.execute(f"""
                         UPDATE {esquema}.{tabla_loc}
-                        SET [FechaFin]=GETDATE(),
-                            [Estado]='99',
-                            [Observaciones]='{observaciones}',
-                            [RutaImagen]='{ruta_img}',
-                            [UrlProducto]='{url_prd}'
+                        SET FechaModificacion=GETDATE()
                         WHERE Id='{id_ticket}'
                     """)
-                elif estado == "3":
-                    cursor.execute(f"""
-                        UPDATE {esquema}.{tabla_loc}
-                        SET [FechaFin]=GETDATE(),
-                            [Estado]='3',
-                            [Observaciones]='{observaciones}',
-                            [RutaImagen]='{ruta_img}',
-                            [UrlProducto]='{url_prd}'
-                        WHERE Id='{id_ticket}'
-                    """)
-                else:
-                    banner = "No disponible" if observaciones == "Sin stock" else ""
-                    cursor.execute(f"""
-                        UPDATE {esquema}.{tabla_loc}
-                        SET [FechaFin]=GETDATE(),
-                            [Estado]='2',
-                            [Observaciones]='{observaciones}',
-                            [BannerProducto]='{banner}',
-                            [PrecioSinDescuento]=REPLACE(REPLACE(REPLACE('{precio_sin}',' ',''),'.',''),'$',''),
-                            [PrecioConDescuento]=REPLACE(REPLACE(REPLACE('{precio_con}',' ',''),'.',''),'$',''),
-                            [PrecioUnitario]='',
-                            [UrlProducto]='{url_prd}',
-                            [NombrePrd]=REPLACE('{titulo}',';',''),
-                            [MarcaProducto]='{marca}',
-                            [RutaImagen]='{ruta_img}'
-                        WHERE Id='{id_ticket}'
-                    """)
+                    conn.commit()
+                    conn.close()
 
-                conn.commit()
-                conn.close()
+                    ruta_ss = os.path.join(
+                        ruta_screenshots,
+                        f"{ean}_{id_ticket}.jpg"
+                    )
 
-            context.close()
+                    write_log(
+                        "Info",
+                        f"HU02: [{i+1}/{len(registros)}] Consultando EAN ({ean}) "
+                        f"— {url_template.replace('REEMPLAZAR', ean)}",
+                        task_name, in_config
+                    )
+
+                    # Página nueva por EAN para evitar que un estado corrupto
+                    # de la navegacion anterior bloquee los siguientes.
+                    page = context.new_page()
+                    try:
+                        resultado = _consultar_ean(
+                            page=page,
+                            ean=ean,
+                            palabra_clave=palabra_clave,
+                            url_template=url_template,
+                            ruta_screenshot=ruta_ss,
+                            in_config=in_config,
+                            task_name=task_name,
+                            primer_ean=(i == 0),
+                        )
+                    finally:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+
+                    conn   = conectar_bd(in_config)
+                    cursor = conn.cursor()
+                    estado        = resultado["estado"]
+                    observaciones = resultado["observaciones"][:250].replace("'", "''")
+                    titulo        = resultado["titulo"].replace(";", "").replace("'", "''")
+                    marca         = resultado["marca"].replace("'", "''")
+                    precio_sin    = resultado["precio_sin_desc"]
+                    precio_con    = resultado["precio_con_desc"]
+                    url_prd       = resultado["url_producto"].replace("'", "''")
+                    ruta_img      = ruta_ss.replace("'", "''")
+
+                    if estado == "99":
+                        cursor.execute(f"""
+                            UPDATE {esquema}.{tabla_loc}
+                            SET [FechaFin]=GETDATE(),
+                                [Estado]='99',
+                                [Observaciones]='{observaciones}',
+                                [RutaImagen]='{ruta_img}',
+                                [UrlProducto]='{url_prd}'
+                            WHERE Id='{id_ticket}'
+                        """)
+                    elif estado == "3":
+                        cursor.execute(f"""
+                            UPDATE {esquema}.{tabla_loc}
+                            SET [FechaFin]=GETDATE(),
+                                [Estado]='3',
+                                [Observaciones]='{observaciones}',
+                                [RutaImagen]='{ruta_img}',
+                                [UrlProducto]='{url_prd}'
+                            WHERE Id='{id_ticket}'
+                        """)
+                    else:
+                        banner = "No disponible" if observaciones == "Sin stock" else ""
+                        cursor.execute(f"""
+                            UPDATE {esquema}.{tabla_loc}
+                            SET [FechaFin]=GETDATE(),
+                                [Estado]='2',
+                                [Observaciones]='{observaciones}',
+                                [BannerProducto]='{banner}',
+                                [PrecioSinDescuento]=REPLACE(REPLACE(REPLACE('{precio_sin}',' ',''),'.',''),'$',''),
+                                [PrecioConDescuento]=REPLACE(REPLACE(REPLACE('{precio_con}',' ',''),'.',''),'$',''),
+                                [PrecioUnitario]='',
+                                [UrlProducto]='{url_prd}',
+                                [NombrePrd]=REPLACE('{titulo}',';',''),
+                                [MarcaProducto]='{marca}',
+                                [RutaImagen]='{ruta_img}'
+                            WHERE Id='{id_ticket}'
+                        """)
+
+                    conn.commit()
+                    conn.close()
+
+                except Exception as ean_err:
+                    write_log("Warning", f"HU02: Error procesando EAN ({ean}): {ean_err}", task_name, in_config)
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+            try:
+                context.close()
+            except Exception:
+                pass
 
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT TOP(1) * FROM {esquema}.{tabla_loc} WHERE Estado='1'
+                SELECT COUNT(*) FROM {esquema}.{tabla_loc} WHERE Estado='1'
             """)
-            hay_mas = cursor.fetchone() is not None
+            cnt_restantes = cursor.fetchone()[0]
+            hay_mas = cnt_restantes > 0
             conn.close()
+            write_log("Info", f"HU02: Registros restantes con Estado=1: {cnt_restantes}", task_name, in_config)
 
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
@@ -763,15 +805,8 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         task_name, in_config
     )
 
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='100' "
-        f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
-    )
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='199' "
-        f"WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'"
-    )
-
+    # Calcular Porc.Descuento y limpiar PrecioConDescuento ANTES de cambiar
+    # el estado a 100/199, porque las clausulas WHERE filtan por Estado='2'.
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
         SET [PrecioConDescuento]='0'
@@ -790,6 +825,15 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
           AND TRY_CAST(PrecioSinDescuento AS INT) != TRY_CAST(PrecioConDescuento AS INT)
           AND TRY_CAST(PrecioConDescuento AS INT) > 0
     """)
+
+    cursor.execute(
+        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='100' "
+        f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
+    )
+    cursor.execute(
+        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='199' "
+        f"WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'"
+    )
 
     conn.commit()
     conn.close()
