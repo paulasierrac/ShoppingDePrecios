@@ -229,8 +229,14 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                         const url    = card.querySelector('.dfd-card-link')?.href || '';
                         const marca  = card.querySelector('input[name="item_brand"]')
                                           ?.value || '';
-                        const pum    = card.querySelector('.dfd-card-pum')
+
+                        // Transformar "PUM: $ 1,850.00 TAB" → "(TAB a $ 1,850.00)"
+                        const pumRaw = card.querySelector('.dfd-card-pum')
                                           ?.innerText?.trim() || '';
+                        const pumM   = pumRaw.match(/PUM:\s*\$\s*([\d,.]+)\s*([A-Za-z]+)/);
+                        const pum    = pumM
+                            ? `(${pumM[2]} a $ ${pumM[1]})`
+                            : pumRaw.replace(/^PUM:\s*/i, '').trim();
 
                         // Precios desde data-value (evita parsear "$17,080" o "9.81e4")
                         const saleEl  = card.querySelector('.dfd-card-price--sale');
@@ -643,6 +649,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         sello      = datetime.now().strftime("%Y%m%d_%H%M%S")
         ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCafam_{sello}.xlsx")
         pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
+        _incrustar_imagenes(ruta_excel, "Sheet1")
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
         print(f"\n  Reporte debug: {ruta_excel}")
     conn_sq.close()
@@ -696,6 +703,67 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
 
     conn.commit()
     conn.close()
+
+
+# ============================================================
+# Incrustado de imagenes en Excel
+# ============================================================
+
+def _incrustar_imagenes(ruta_excel: str, nombre_hoja: str,
+                         col_ruta_img: str = "RutaImagen") -> None:
+    """Sustituye la columna de rutas de screenshot por miniaturas incrustadas."""
+    try:
+        import io
+        from openpyxl import load_workbook
+        from openpyxl.drawing.image import Image as XlImage
+        from PIL import Image as PILImage
+    except ImportError:
+        return  # Sin Pillow los reportes quedan con la ruta como texto
+
+    try:
+        wb = load_workbook(ruta_excel)
+    except Exception:
+        return
+
+    if nombre_hoja not in wb.sheetnames:
+        return
+    ws = wb[nombre_hoja]
+
+    header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+    if col_ruta_img not in header:
+        return
+    img_col = header.index(col_ruta_img) + 1  # 1-based index
+
+    THUMB_W, THUMB_H = 160, 120   # pixeles
+    ROW_H_PT         = 90          # points (~120 px a 96dpi)
+    col_letter = ws.cell(row=1, column=img_col).column_letter
+    ws.column_dimensions[col_letter].width = 23
+
+    for row_idx in range(2, ws.max_row + 1):
+        cell = ws.cell(row=row_idx, column=img_col)
+        ruta = cell.value
+        if not ruta or not os.path.isfile(str(ruta)):
+            continue
+        try:
+            with PILImage.open(str(ruta)) as pil_img:
+                pil_img = pil_img.convert("RGB")
+                pil_img.thumbnail((THUMB_W, THUMB_H), PILImage.LANCZOS)
+                buf = io.BytesIO()
+                pil_img.save(buf, format="JPEG", quality=70)
+                buf.seek(0)
+            xl_img         = XlImage(buf)
+            xl_img.width   = THUMB_W
+            xl_img.height  = THUMB_H
+            cell.value     = None   # borrar texto de la celda
+            ws.add_image(xl_img, f"{col_letter}{row_idx}")
+            ws.row_dimensions[row_idx].height = ROW_H_PT
+        except Exception:
+            pass  # si la imagen falla, deja la ruta como texto
+
+    try:
+        wb.save(ruta_excel)
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -781,6 +849,7 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     with pd.ExcelWriter(ruta_excel, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=nombre_hoja, index=False)
 
+    _incrustar_imagenes(ruta_excel, nombre_hoja)
     write_log("Info", f"HU02: Reporte generado en ({ruta_excel})", task_name, in_config)
     from_addr = in_config.get("_correo", {}).get("usuario", "")
     reemplazo = {"$NombrePagina$": in_config.get("DrogueriaCafam", "Cafam")}

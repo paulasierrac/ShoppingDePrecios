@@ -151,6 +151,8 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
     resultado = {
         "nombre_prd":      "",
         "marca":           "",
+        "registro_invima": "",
+        "precio_unitario": "",
         "precio_con_desc": "",
         "precio_sin_desc": "",
         "url_producto":    "",
@@ -232,48 +234,50 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
             return resultado
 
         # ── Extraer campos desde la pagina de detalle ─────────────────────
+        # Selectores basados en la estructura Angular real de cruzverde.com.co:
+        # - Nombre  : <h1> dentro de div.text-main
+        # - Marca   : div con clases uppercase italic
+        # - INVIMA  : span.text-12.text-gray-dark
+        # - Precio  : span.font-bold.text-prices (precio "Ahora")
+        #             div.line-through            (precio "Normal" tachado)
+        # - PUM     : div.bg-prices.bg-opacity-30
+        # - Sin stock: boton "Agregar al carrito" tiene atributo disabled
         datos = page.evaluate("""
             (() => {
-                const getText = (sels) => {
-                    for (const sel of sels) {
-                        try {
-                            const el = document.querySelector(sel);
-                            if (el && el.textContent.trim()) return el.textContent.trim();
-                        } catch(e) {}
-                    }
-                    return '';
-                };
+                const t = el => el?.textContent?.trim() || '';
+
+                const nombreEl = document.querySelector('div.text-main h1')
+                              || document.querySelector('h1[style*="color"]')
+                              || document.querySelector('h1');
+
+                const precioConEl = document.querySelector('span.font-bold.text-prices');
+                const precioSinEl = document.querySelector('.line-through');
+                const pumEl       = document.querySelector('.bg-prices.bg-opacity-30');
+                const btnCarrito  = document.querySelector('button[id="Agregar al carrito"]');
+
+                const pumRaw = t(pumEl);
+                const pum    = pumRaw.replace(/^PUM:\\s*/i, '').trim();
+
                 return {
-                    nombre: getText([
-                        'h1.product-name', '.product-name h1', '[class*="product-name"] h1',
-                        'h1[class*="product"]', '.product-title', '.pdp-name', 'h1'
-                    ]),
-                    marca: getText([
-                        '.product-brand', '[class*="product-brand"]', '.brand-name',
-                        '[class*="brand-name"]', '.pdp-brand'
-                    ]),
-                    precio_con: getText([
-                        '.price-value', '[class*="price-value"]', '.actual-price',
-                        '[class*="actual-price"]', '.sale-price', '[class*="sale-price"]',
-                        '.price .value', '.pdp-price'
-                    ]),
-                    precio_sin: getText([
-                        '.price-original', '[class*="price-original"]', '.old-price',
-                        '[class*="old-price"]', '.price-before', '[class*="price-before"]'
-                    ]),
-                    banner: getText([
-                        '.badge-label', '[class*="badge-label"]', '.promotion-label',
-                        '[class*="promo"]'
-                    ]),
+                    nombre:    t(nombreEl),
+                    marca:     t(document.querySelector('.text-16.uppercase.italic')),
+                    invima:    t(document.querySelector('span.text-12.text-gray-dark'))
+                                 .replace(/\\s+/g, ' '),
+                    precioCon: t(precioConEl),
+                    precioSin: t(precioSinEl),
+                    pum:       pum,
+                    sinStock:  !!(btnCarrito?.disabled),
                 };
             })()
         """)
 
-        nombre_prd = datos.get("nombre", "").strip()
-        marca      = datos.get("marca",  "").strip()
-        precio_con = datos.get("precio_con", "").strip()
-        precio_sin = datos.get("precio_sin", "").strip()
-        banner     = datos.get("banner", "").strip()
+        nombre_prd = datos.get("nombre",    "").strip()
+        marca      = datos.get("marca",     "").strip()
+        invima     = datos.get("invima",    "").strip()
+        precio_con = datos.get("precioCon", "").strip()
+        precio_sin = datos.get("precioSin", "").strip()
+        pum        = datos.get("pum",       "").strip()
+        sin_stock  = datos.get("sinStock",  False)
 
         if not nombre_prd and not precio_con:
             write_log("Info", f"HU02: EAN ({ean}) — No se pudo extraer datos del detalle",
@@ -285,18 +289,22 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
             })
             return resultado
 
-        write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
+        write_log("Info",
+                  f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}' "
+                  f"precio_con={_limpiar_precio(precio_con)} precio_sin={_limpiar_precio(precio_sin)}",
                   task_name, in_config)
 
         resultado.update({
             "nombre_prd":      nombre_prd,
             "marca":           marca,
+            "registro_invima": invima,
+            "precio_unitario": pum,
             "precio_con_desc": _limpiar_precio(precio_con),
             "precio_sin_desc": _limpiar_precio(precio_sin),
             "url_producto":    url_producto,
-            "banner":          banner,
+            "banner":          "Sin stock" if sin_stock else "",
             "estado":          "2",
-            "observaciones":   "",
+            "observaciones":   "Sin stock" if sin_stock else "",
         })
 
     except PlaywrightTimeout:
@@ -585,8 +593,8 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
                 (ahora, ahora, ahora,
                  r.get("estado", "99"), r.get("observaciones", ""), r.get("reintentos", 0), maquina,
                  "", r["EAN"], r["Descripcion"], "", ahora,
-                 r.get("marca", ""), r.get("nombre_prd", ""), "",
-                 "", r.get("precio_con_desc", ""), r.get("precio_sin_desc", ""), "",
+                 r.get("marca", ""), r.get("nombre_prd", ""), r.get("registro_invima", ""),
+                 r.get("precio_unitario", ""), r.get("precio_con_desc", ""), r.get("precio_sin_desc", ""), "",
                  "", r.get("banner", ""), r.get("url_producto", ""), r.get("RutaImagen", ""))
             )
         conn_sq.commit()
@@ -611,6 +619,8 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
     estado     = res["estado"]
     nombre_prd = res["nombre_prd"].replace(";", "").replace("'", "''")
     marca      = res["marca"].replace("'", "''")
+    invima     = res.get("registro_invima", "").replace("'", "''")
+    pum        = res.get("precio_unitario", "").replace("'", "''")
     precio_con = res["precio_con_desc"]
     precio_sin = res["precio_sin_desc"]
     url_prd    = res["url_producto"].replace("'", "''")
@@ -641,6 +651,7 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
             UPDATE {esquema}.{tabla_ex}
             SET [FechaFin]=GETDATE(),[Estado]='2',
                 [NombrePrd]='{nombre_prd}',[MarcaProducto]='{marca}',
+                [RegistroInvima]='{invima}',[PrecioUnitario]='{pum}',
                 [PrecioConDescuento]='{precio_con}',[PrecioSinDescuento]='{precio_sin}',
                 [BannerProducto]='{banner}',
                 [Observaciones]='{obs}',[UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'

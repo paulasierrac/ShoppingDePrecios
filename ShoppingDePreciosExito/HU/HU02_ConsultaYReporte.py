@@ -292,13 +292,23 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
         )
         _tomar_screenshot(page, ruta_screenshot)
 
+        precio_con = _limpiar_precio(precio_con_raw)
+        precio_sin = _limpiar_precio(precio_sin_raw)
+        porc_desc  = porc_desc_raw.replace("%", "").strip()
+
+        # Si solo hay un precio (sin tachado) -> precio regular sin descuento
+        if precio_con and not precio_sin:
+            precio_sin = precio_con
+            precio_con = ""
+            porc_desc  = ""
+
         resultado.update({
             "nombre_prd":          nombre_prd,
             "marca":               marca,
             "precio_fidelizacion": _limpiar_precio(precio_fid_raw),
-            "precio_con_desc":     _limpiar_precio(precio_con_raw),
-            "precio_sin_desc":     _limpiar_precio(precio_sin_raw),
-            "porc_descuento":      porc_desc_raw.replace("%", "").strip(),
+            "precio_con_desc":     precio_con,
+            "precio_sin_desc":     precio_sin,
+            "porc_descuento":      porc_desc,
             "precio_unitario":     precio_unit_raw,
             "url_producto":        url_producto,
             "banner":              "",
