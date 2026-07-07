@@ -96,6 +96,8 @@ def _asegurar_chromium(in_config: dict, task_name: str) -> None:
 
 def _js_selector(page: Page, selector: str, default: str = "") -> str:
     """Obtiene textContent del primer elemento que coincida con el selector CSS."""
+    if not selector:
+        return default
     try:
         result = page.evaluate(
             f"document.querySelector({repr(selector)})?.textContent?.trim() || ''"
@@ -157,6 +159,7 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
         "marca":           "",
         "precio_con_desc": "",
         "precio_sin_desc": "",
+        "precio_unitario": "",
         "registro_invima": "",
         "url_producto":    "",
         "banner":          "",
@@ -164,30 +167,42 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
     }
 
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
+    url_base     = url_template.split("/buscar")[0] if "/buscar" in url_template else ""
 
     try:
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(ESPERA_CARGA)
 
-        nombre_prd = ""
-        precio_con = ""
-        precio_sin = ""
-        marca      = ""
-        reg_invima = ""
-        url_prod   = ""
-        banner     = ""
+        nombre_prd  = ""
+        precio_con  = ""
+        precio_sin  = ""
+        marca       = ""
+        precio_unit = ""
+        reg_invima  = ""
+        url_prod    = ""
+        banner      = ""
 
         for intento in range(3):
-            nombre_prd = _js_selector(page, selectores.get("NombrePrd", ".product-name"))
-            precio_con = _js_selector(page, selectores.get("PrecioConDescuento", ".price-box .price"))
-            precio_sin = _js_selector(page, selectores.get("PrecioSinDescuento", ".price-box .old-price .price"))
-            marca      = _js_selector(page, selectores.get("Marca", ".product-brand"))
-            reg_invima = _js_selector(page, selectores.get("RegistroInvima", ".invima"))
-            banner     = _js_selector(page, selectores.get("Banner", ".badge-label"))
+            # Selectores con fallback a los valores reales del HTML de Farmatodo
+            nombre_prd  = _js_selector(page, selectores.get("NombrePrd",          ".text-title"))
+            precio_con  = _js_selector(page, selectores.get("PrecioConDescuento",  ".price__text-price"))
+            precio_sin  = _js_selector(page, selectores.get("PrecioSinDescuento",  ".price__text-offer-price"))
+            marca       = _js_selector(page, selectores.get("Marca",               ".text-brand"))
+            precio_unit = _js_selector(page, selectores.get("PrecioUnitario",      ".price__text-price-unit"))
+            reg_invima  = _js_selector(page, selectores.get("RegistroInvima",      ""))
+            banner      = _js_selector(page, selectores.get("Banner",              ".offer-description__text"))
+
+            # URL del producto: extraer href del primer card
             try:
-                url_prod = page.evaluate(
-                    f"document.querySelector({repr(selectores.get('UrlProducto', 'link[rel=canonical]'))})?.href || ''"
-                ) or url_busqueda
+                href = page.evaluate(
+                    "document.querySelector('a.content-product')?.getAttribute('href') || ''"
+                ) or ""
+                if href.startswith("/"):
+                    url_prod = url_base + href
+                elif href.startswith("http"):
+                    url_prod = href
+                else:
+                    url_prod = url_busqueda
             except Exception:
                 url_prod = url_busqueda
 
@@ -212,11 +227,20 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
         write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
                   task_name, in_config)
 
+        precio_con_val = _limpiar_precio(precio_con)
+        precio_sin_val = _limpiar_precio(precio_sin)
+
+        # Sin precio tachado → precio regular sin descuento
+        if precio_con_val and not precio_sin_val:
+            precio_sin_val = precio_con_val
+            precio_con_val = ""
+
         resultado.update({
             "nombre_prd":      nombre_prd,
             "marca":           marca,
-            "precio_con_desc": _limpiar_precio(precio_con),
-            "precio_sin_desc": _limpiar_precio(precio_sin),
+            "precio_con_desc": precio_con_val,
+            "precio_sin_desc": precio_sin_val,
+            "precio_unitario": precio_unit,
             "registro_invima": reg_invima,
             "url_producto":    url_prod,
             "banner":          banner,
@@ -503,13 +527,14 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
                 f"INSERT INTO {esquema}.Farmatodo "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Maquina, "
                 " PLU, EAN, Descripcion, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, "
                 " PrecioFidelizacion, UrlProducto, BannerProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
                  r.get("estado", "99"), maquina,
                  "", r["EAN"], r["Descripcion"], ahora,
                  r.get("marca", ""), r.get("nombre_prd", ""), r.get("registro_invima", ""),
+                 r.get("precio_unitario", ""),
                  r.get("precio_con_desc", ""), r.get("precio_sin_desc", ""), "",
                  "", r.get("url_producto", ""), r.get("banner", ""), r.get("RutaImagen", ""))
             )
@@ -532,15 +557,16 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
 # ============================================================
 
 def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
-    estado     = res["estado"]
-    nombre_prd = res["nombre_prd"].replace(";", "").replace("'", "''")
-    marca      = res["marca"].replace("'", "''")
-    precio_con = res["precio_con_desc"]
-    precio_sin = res["precio_sin_desc"]
-    reg_inv    = res["registro_invima"].replace("'", "''")
-    url_prd    = res["url_producto"].replace("'", "''")
-    banner     = res["banner"].replace("'", "''")
-    ruta_img   = ruta_ss.replace("'", "''")
+    estado      = res["estado"]
+    nombre_prd  = res["nombre_prd"].replace(";", "").replace("'", "''")
+    marca       = res["marca"].replace("'", "''")
+    precio_con  = res["precio_con_desc"]
+    precio_sin  = res["precio_sin_desc"]
+    precio_unit = res.get("precio_unitario", "").replace("'", "''")
+    reg_inv     = res["registro_invima"].replace("'", "''")
+    url_prd     = res["url_producto"].replace("'", "''")
+    banner      = res["banner"].replace("'", "''")
+    ruta_img    = ruta_ss.replace("'", "''")
 
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
@@ -558,6 +584,7 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
             SET [FechaFin]=GETDATE(),[Estado]='2',
                 [NombrePrd]='{nombre_prd}',[MarcaProducto]='{marca}',
                 [RegistroInvima]='{reg_inv}',
+                [PrecioUnitario]='{precio_unit}',
                 [PrecioConDescuento]='{precio_con}',[PrecioSinDescuento]='{precio_sin}',
                 [BannerProducto]='{banner}',
                 [UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
