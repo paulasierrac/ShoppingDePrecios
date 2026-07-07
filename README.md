@@ -17,7 +17,9 @@ Robot RPA (migración de Automation Anywhere a Python/Playwright) que extrae pre
 - [Ejecución](#ejecución)
 - [Modo debug](#modo-debug)
 - [Base de datos](#base-de-datos)
+- [Convenciones de precios](#convenciones-de-precios)
 - [Estados de registros](#estados-de-registros)
+- [Notas técnicas por farmacia](#notas-técnicas-por-farmacia)
 - [Errores frecuentes y soluciones](#errores-frecuentes-y-soluciones)
 
 ---
@@ -93,9 +95,10 @@ pip install -r requirements.txt
 |----------|----------------|-----------------|
 | `pandas` | 2.0 | Lectura del Excel de insumo, generación de reportes Excel y manipulación de datos tabulares en memoria |
 | `selenium` | 4.10 | Dependencia legada — todas las farmacias activas migraron a Playwright. Ya no se usa en HU02 de ninguna farmacia |
-| `playwright` | 1.40 | Motor de scraping web para Locatel y Éxito. Más estable que Selenium en entornos con proxy SSL corporativo. Requiere ejecutar `playwright install chromium` por cada usuario de Windows |
+| `playwright` | 1.40 | Motor de scraping web para las cinco farmacias completas (Locatel, Éxito, Cafam, Farmatodo, Cruz Verde). Requiere ejecutar `playwright install chromium` por cada usuario de Windows |
 | `pyodbc` | 5.0 | Conexión a SQL Server mediante ODBC Driver 17/18. Usado en todas las HU para leer parámetros, cargar insumo y guardar resultados |
-| `openpyxl` | 3.1 | Motor de escritura de archivos `.xlsx` usado por pandas (`pd.ExcelWriter(..., engine="openpyxl")`) |
+| `openpyxl` | 3.1 | Motor de escritura de archivos `.xlsx` usado por pandas (`pd.ExcelWriter(..., engine="openpyxl")`) y para incrustar imágenes en el reporte de Cafam |
+| `Pillow` | 10.0 | Incrustación de thumbnails (screenshots) dentro de los reportes Excel de Cafam |
 | `azure-identity` | 1.12 | Autenticación con Azure (credenciales de cuenta de servicio o identidad administrada) para acceder al Key Vault |
 | `azure-keyvault-secrets` | 4.6 | Lectura de secretos desde Azure Key Vault (usuario, contraseña y servidor de BD) |
 | `python-dotenv` | 1.0 | Carga de variables de entorno desde archivo `.env` en desarrollo local |
@@ -103,7 +106,7 @@ pip install -r requirements.txt
 | `pydantic-settings` | 2.0 | Carga de settings desde variables de entorno usando modelos Pydantic |
 | `python-dateutil` | 2.8 | Parsing de fechas en distintos formatos (usado internamente por pandas) |
 
-### 2. Navegador Playwright (Locatel y Éxito)
+### 2. Navegador Playwright
 
 Debe ejecutarse **una vez por usuario de Windows** en la máquina donde corre el bot:
 
@@ -159,7 +162,7 @@ Cada farmacia tiene su propia URL. El bot reemplaza el token `REEMPLAZAR` por el
 | `UrlExito` | Éxito | `https://www.exito.com/s?q=REEMPLAZAR&sort=score_desc&page=0` |
 | `UrlLocatel` | Locatel | `https://www.locatelcolombia.com/REEMPLAZAR` |
 | `UrlCafam` | Cafam | `https://www.cafam.com.co/...?q=REEMPLAZAR` |
-| `UrlFarmatodo` | Farmatodo | `https://www.farmatodo.com.co/...?q=REEMPLAZAR` |
+| `UrlFarmatodo` | Farmatodo | `https://www.farmatodo.com.co/buscar?product=REEMPLAZAR&` |
 | `UrlCruzVerde` | Cruz Verde | `https://www.cruzverde.com.co/...?q=REEMPLAZAR` |
 
 ### Control de scraping por farmacia
@@ -190,7 +193,7 @@ Cada farmacia tiene su propio par de parámetros para controlar la velocidad del
 | Parámetro | Descripción |
 |-----------|-------------|
 | `LimpiezaDB` | Fecha de la última limpieza de registros históricos en BD (formato `YYYY-MM-DD`). HU00 compara esta fecha con la del día actual para evitar limpiar más de una vez por día. Se actualiza automáticamente tras cada limpieza. |
-| `LoteDebug` | Número máximo de EANs a consultar cuando el bot corre en **modo debug**. Permite hacer pruebas rápidas sin procesar todo el insumo. Valor recomendado: `3` a `10`. Para procesar todos los registros en debug, igualar este valor al total de registros en el insumo. |
+| `LoteDebug` | Número máximo de EANs a consultar cuando el bot corre en **modo debug**. Permite hacer pruebas rápidas sin procesar todo el insumo. Valor recomendado: `3` a `10`. |
 
 ### Nombres de farmacias (para correos)
 
@@ -247,10 +250,10 @@ python ShoppingDePreciosExito/main.py
 | HU | Comportamiento |
 |----|----------------|
 | HU00 | Lee parámetros de SQL Server (solo lectura — sin cambios) |
-| HU01 | Lee `Insumo/InsumoPricing.xlsx` local → CSV en `debug/temp/` → INSERT en BD dev (no mueve el archivo) |
-| HU02 | Lee de BD dev → Chrome **visible** → Escribe resultados en BD dev → Excel en `debug/` |
+| HU01 | Lee `Insumo/InsumoPricing.xlsx` local → CSV en `debug/temp/` → INSERT en `pruebas.db` (no mueve el archivo) |
+| HU02 | Lee de `pruebas.db` → Chrome **visible** → Escribe resultados en `pruebas.db` → Excel en `debug/` |
 | Correos | Omitidos |
-| SQL Server (escrituras) | Solo en BD dev, ninguna escritura en producción |
+| SQL Server (escrituras) | Ninguna escritura en producción; solo lecturas en HU00 |
 
 El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx` y **no se mueve ni elimina** en modo debug, lo que permite re-ejecutar sin regenerar el archivo.
 
@@ -269,19 +272,35 @@ El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx
 | `Farmatodo` | Resultados de scraping Farmatodo |
 | `CruzVerde` | Resultados de scraping Cruz Verde |
 | `Parametros` | Parámetros de configuración del robot |
-| `Selectores` | Selectores CSS de scraping (usado por Farmatodo) |
+| `Selectores` | Selectores CSS de scraping para Farmatodo (**opcional** — el código usa fallbacks hardcodeados si la tabla no existe o está vacía) |
 | `EnvioCorreos` | Plantillas de correos de notificación |
 
 ### Grupos de tablas de resultados
 
-**Grupo A** (Locatel, Cafam, CruzVerde) — 25 columnas, incluye `Observaciones` y `Reintentos`.
+**Grupo A** (Locatel, Cafam, CruzVerde) — incluye columnas `Observaciones`, `Reintentos` y `Categoria`.
 
-**Grupo B** (Éxito, Farmatodo) — 20 columnas, sin `Observaciones`.
+**Grupo B** (Éxito, Farmatodo) — sin `Observaciones` ni `Reintentos`.
 
 ### Formato de precios colombiano
 
 - Separador de miles: `.` (punto) → se elimina con `REPLACE('.', '')`
 - Cafam usa `,` como decimal → se convierte con `REPLACE(',', '.')`
+
+---
+
+## Convenciones de precios
+
+Todos los HU02 siguen la misma convención para asignar los campos de precio:
+
+| Campo | Contenido |
+|-------|-----------|
+| `PrecioSinDescuento` | Precio regular (precio de lista, sin descuento aplicado) |
+| `PrecioConDescuento` | Precio final tras aplicar el descuento. **Vacío si no hay descuento activo.** |
+| `Porc.Descuento` | Porcentaje de descuento, calculado como `(SinDesc - ConDesc) * 100 / SinDesc` |
+| `PrecioFidelizacion` | Precio especial para clientes del programa de fidelización (Éxito Club, etc.) |
+| `PrecioUnitario` | Precio por unidad de medida (PUM). Ej: `(Ml a $ 12,72)` o `Mililitros a $ 14.08` |
+
+> **Regla clave:** Cuando el sitio muestra un solo precio sin tachado (sin descuento activo), el valor se guarda en `PrecioSinDescuento` y `PrecioConDescuento` queda vacío. Esto aplica a Éxito, Farmatodo y Cafam.
 
 ---
 
@@ -300,6 +319,40 @@ Aplican a todas las tablas de resultados (`Locatel`, `Exito`, `Cafam`, etc.):
 
 ---
 
+## Notas técnicas por farmacia
+
+### Éxito
+- El scraping se realiza sobre la **página de resultados de búsqueda** (`/s?q=EAN`). La URL del producto almacenada puede ser la URL de búsqueda (si el sitio no redirige) o la URL directa del producto (si Éxito la incluye en el HTML de resultados).
+- El `PrecioUnitario` se extrae de la clase `.product-unit_price-unit__text__qeheS`. No todos los productos lo muestran en la página de resultados.
+
+### Cafam
+- Cafam usa **Doofinder** con Phoenix LiveView (WebSocket). Para evitar que el sitio detecte múltiples conexiones como tráfico de bot, **se mantiene una sola página por lote** y se reutiliza el campo de búsqueda Doofinder (`.dfd-searchbox-input`) para los EANs subsiguientes.
+- El `PrecioUnitario` se transforma del formato `PUM: $ 14.00 ML` al formato `(ML a $ 14.00)` antes de guardar.
+- Los screenshots se **incrustan como thumbnails (160×120 px) directamente en el Excel** de resultado, además de guardarse en disco. Requiere `Pillow>=10.0`.
+
+### Farmatodo
+- Los selectores CSS se cargan desde la tabla `[ShoppingDePrecios].[Selectores]` con `Competencia='FARMATODO'`. Si la tabla no existe o está vacía, el código usa los siguientes **selectores por defecto** basados en el HTML real del sitio (Angular SPA):
+
+  | Campo | Selector CSS |
+  |-------|-------------|
+  | Nombre | `.text-title` |
+  | Marca | `.text-brand` |
+  | Precio con descuento | `.price__text-price` |
+  | Precio sin descuento | `.price__text-offer-price` |
+  | PUM | `.price__text-price-unit` |
+  | Banner | `.offer-description__text` |
+  | URL producto | `a.content-product[href]` |
+
+### Locatel
+- Locatel redirige directamente a la página de detalle del producto cuando hay un único resultado por EAN (URL con `/p?skuId=`). El scraper detecta ambos casos (página de detalle vs. página de resultados).
+- El `Porc.Descuento` se calcula en BD durante la generación del reporte, antes de marcar los registros como Estado=100.
+
+### Cruz Verde
+- Cruz Verde es una SPA Angular con componentes `ml-card-product`. Los datos se extraen via JavaScript sobre el DOM de la página de detalle del producto.
+- Los campos `RegistroInvima` y `PrecioUnitario` se incluyen cuando están disponibles en la página.
+
+---
+
 ## Errores frecuentes y soluciones
 
 ### `Executable doesn't exist at ...ms-playwright\chromium...`
@@ -309,6 +362,10 @@ Playwright está instalado como librería pero los binarios del navegador no se 
 ```bash
 playwright install chromium
 ```
+
+### `Invalid object name 'ShoppingDePrecios.Selectores'`
+
+La tabla de selectores CSS de Farmatodo no existe en la base de datos. **No bloquea la ejecución** — el código registra el warning y continúa usando los selectores hardcodeados. Para activar selectores configurables desde BD, crear la tabla con las columnas `[Clave]`, `[Selector]` y `[Competencia]` e insertar las filas con `Competencia='FARMATODO'`.
 
 ### `Incorrect syntax near 'LIMIT'`
 
@@ -322,10 +379,18 @@ La tabla tiene una columna `Id` con IDENTITY. Requiere `SET IDENTITY_INSERT ON` 
 
 El proxy corporativo hace inspección SSL (Deep Packet Inspection). Playwright está configurado con `ignore_https_errors=True` en el contexto del navegador para manejar esto. Si el error persiste verificar que el proxy del sistema esté bien configurado en Windows.
 
+### `net::ERR_ABORTED` en Cafam (segundo EAN en adelante)
+
+Ocurre si se crea una nueva página (`context.new_page()`) por cada EAN en Cafam. El sitio detecta múltiples conexiones HTTP como bot y las aborta. La solución implementada es usar **una sola página por lote** y cambiar el EAN usando el campo de búsqueda de Doofinder.
+
 ### Registros duplicados en tablas de resultados
 
-Causado por ejecutar HU01 múltiples veces con `DELETE FROM` en lugar de `TRUNCATE TABLE`. `TRUNCATE` resetea el contador IDENTITY, evitando que se generen Ids duplicados. Todos los HU01 ya usan `TRUNCATE TABLE`.
+Causado por ejecutar HU01 múltiples veces con `DELETE FROM` en lugar de `TRUNCATE TABLE`. `TRUNCATE` resetea el contador IDENTITY, evitando que se generen IDs duplicados. Todos los HU01 ya usan `TRUNCATE TABLE`.
 
-### Correos no enviados — columnas no encontradas
+### `Porc.Descuento` vacío en Locatel
 
-El archivo `EnvioCorreos.xlsx` usa encabezados en español. La función `cargar_tabla_envio_correos` en `utils.py` hace el mapeo automático a los nombres que espera la BD.
+Ocurre si el cálculo del porcentaje de descuento se ejecuta después de que el estado ya cambió a `100`. El UPDATE de `Porc.Descuento` debe correr mientras los registros aún están en Estado=`2`. Esta corrección ya está aplicada en el código.
+
+### Imágenes no incrustadas en el Excel de Cafam
+
+Requiere `Pillow>=10.0`. Verificar con `pip install Pillow>=10.0`. Si `Pillow` no está disponible, `_incrustar_imagenes` falla silenciosamente y el Excel se genera sin thumbnails (las rutas de imagen siguen presentes en la columna `RutaImagen`).
