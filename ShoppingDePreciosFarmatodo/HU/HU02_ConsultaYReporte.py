@@ -126,46 +126,46 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
 def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
     """Detecta y cierra el modal 'Selecciona tu ciudad' de Farmatodo.
 
-    Intenta hacer clic en 'Bogotá' o en el primer botón de ciudad disponible.
-    Usa Escape como último recurso. El modal solo aparece en la primera carga;
-    una vez seleccionada la ciudad la cookie persiste en el contexto.
+    Usa JavaScript para iterar todos los elementos visibles y hacer click en
+    el primero que contenga 'bogot' (case insensitive). Una vez seleccionada
+    la ciudad, la cookie persiste en el contexto del navegador.
     """
     try:
-        titulo = page.evaluate(
-            "document.querySelector('.text-title')?.textContent?.trim() || ''"
-        )
-        if "ciudad" not in str(titulo).lower():
-            return
+        cerrado = page.evaluate(r"""
+            (() => {
+                const titulo = document.querySelector('.text-title');
+                if (!titulo) return false;
+                if (!titulo.textContent.toLowerCase().includes('ciudad')) return false;
 
-        write_log("Info", "HU02: Modal 'Selecciona tu ciudad' detectado — intentando cerrar",
-                  task_name, in_config)
+                const candidatos = document.querySelectorAll(
+                    'button, a, li, [role="button"], [role="option"]'
+                );
+                for (const el of candidatos) {
+                    const texto = el.textContent?.trim() || '';
+                    if (/bogot/i.test(texto) && el.offsetParent !== null) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            })()
+        """)
 
-        cerrado = False
-        for sel in [
-            "button:has-text('Bogotá')",
-            "a:has-text('Bogotá')",
-            "button:has-text('Bogota')",
-            "a:has-text('Bogota')",
-            ".city-selector button",
-            ".location-modal button",
-            ".modal-city button",
-            "button[data-city]",
-            "a[data-city]",
-        ]:
-            try:
-                btn = page.query_selector(sel)
-                if btn and btn.is_visible():
-                    btn.click()
-                    page.wait_for_timeout(1500)
-                    cerrado = True
-                    write_log("Info", "HU02: Ciudad seleccionada — modal cerrado", task_name, in_config)
-                    break
-            except Exception:
-                pass
-
-        if not cerrado:
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
+        if cerrado:
+            write_log("Info", "HU02: Modal 'Selecciona tu ciudad' cerrado (Bogotá seleccionado)",
+                      task_name, in_config)
+            page.wait_for_timeout(1500)
+        else:
+            tiene_modal = page.evaluate(
+                r"(() => { const t = document.querySelector('.text-title'); "
+                r"return t ? t.textContent.toLowerCase().includes('ciudad') : false; })()"
+            )
+            if tiene_modal:
+                write_log("Info",
+                          "HU02: Modal ciudad visible pero sin botón Bogotá — usando Escape",
+                          task_name, in_config)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(800)
     except Exception:
         pass
 

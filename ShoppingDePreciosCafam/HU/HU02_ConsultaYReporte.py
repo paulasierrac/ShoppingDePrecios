@@ -212,7 +212,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         datos = None
         for intento in range(3):
             try:
-                datos = page.evaluate("""
+                datos = page.evaluate(r"""
                     (() => {
                         // Primera tarjeta fuera del bloque "sin resultados"
                         const card = document.querySelector(

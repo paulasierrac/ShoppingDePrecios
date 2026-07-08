@@ -241,7 +241,7 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
         #             div.line-through            (precio "Normal" tachado)
         # - PUM     : div.bg-prices.bg-opacity-30
         # - Sin stock: boton "Agregar al carrito" tiene atributo disabled
-        datos = page.evaluate("""
+        datos = page.evaluate(r"""
             (() => {
                 const t = el => el?.textContent?.trim() || '';
 
