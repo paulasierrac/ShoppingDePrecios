@@ -126,46 +126,63 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
 def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
     """Detecta y cierra el modal 'Selecciona tu ciudad' de Farmatodo.
 
-    Usa JavaScript para iterar todos los elementos visibles y hacer click en
-    el primero que contenga 'bogot' (case insensitive). Una vez seleccionada
-    la ciudad, la cookie persiste en el contexto del navegador.
+    Usa getBoundingClientRect() para visibilidad (funciona con position:fixed).
+    Registra los textos de todos los botones visibles para facilitar debug
+    cuando no encuentra el botón de Bogotá.
     """
     try:
-        cerrado = page.evaluate(r"""
+        resultado = page.evaluate(r"""
             (() => {
                 const titulo = document.querySelector('.text-title');
-                if (!titulo) return false;
-                if (!titulo.textContent.toLowerCase().includes('ciudad')) return false;
+                if (!titulo) return {modal: false};
+                if (!titulo.textContent.toLowerCase().includes('ciudad')) return {modal: false};
 
-                const candidatos = document.querySelectorAll(
-                    'button, a, li, [role="button"], [role="option"]'
-                );
+                function esVisible(el) {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                }
+
+                const candidatos = [
+                    ...document.querySelectorAll(
+                        'button, a, li, [role="button"], [role="option"]'
+                    )
+                ];
+
+                // Recoger textos de todos los botones visibles (max 20) para log
+                const textosBotones = candidatos
+                    .filter(esVisible)
+                    .map(el => (el.textContent?.trim() || '').substring(0, 40))
+                    .filter(t => t.length > 0)
+                    .slice(0, 20);
+
+                // Buscar botón Bogotá
                 for (const el of candidatos) {
                     const texto = el.textContent?.trim() || '';
-                    if (/bogot/i.test(texto) && el.offsetParent !== null) {
+                    if (/bogot/i.test(texto) && esVisible(el)) {
                         el.click();
-                        return true;
+                        return {modal: true, accion: 'click', texto: texto};
                     }
                 }
-                return false;
+
+                return {modal: true, accion: 'none', botones: textosBotones};
             })()
         """)
 
-        if cerrado:
-            write_log("Info", "HU02: Modal 'Selecciona tu ciudad' cerrado (Bogotá seleccionado)",
+        if not resultado or not resultado.get("modal"):
+            return
+
+        if resultado.get("accion") == "click":
+            write_log("Info",
+                      f"HU02: Modal ciudad cerrado — clic en '{resultado.get('texto', '')}'",
                       task_name, in_config)
             page.wait_for_timeout(1500)
         else:
-            tiene_modal = page.evaluate(
-                r"(() => { const t = document.querySelector('.text-title'); "
-                r"return t ? t.textContent.toLowerCase().includes('ciudad') : false; })()"
-            )
-            if tiene_modal:
-                write_log("Info",
-                          "HU02: Modal ciudad visible pero sin botón Bogotá — usando Escape",
-                          task_name, in_config)
-                page.keyboard.press("Escape")
-                page.wait_for_timeout(800)
+            botones = resultado.get("botones") or []
+            write_log("Info",
+                      f"HU02: Modal ciudad sin botón Bogotá — botones visibles: {botones}",
+                      task_name, in_config)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(800)
     except Exception:
         pass
 
