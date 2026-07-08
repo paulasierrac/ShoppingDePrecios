@@ -387,12 +387,12 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
     browser     = None
 
     try:
-        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_loc    = in_config.get("TablaLocatel",      "Locatel")
-        tabla_ins    = in_config.get("TablaTicketInsumo", "TicketInsumo")
-        url_template = in_config.get("UrlLocatel", "")
-        lote         = int(in_config.get("LoteLocatel", "10"))
-        reintentos_r = in_config.get("ReintentosReprocesamiento", "3")
+        esquema      = in_config["Scheme"]
+        tabla_loc    = in_config["TablaLocatel"]
+        tabla_ins    = in_config["TablaTicketInsumo"]
+        url_template = in_config.get("UrlLocatel") or ""
+        lote         = int(in_config["LoteLocatel"])
+        reintentos_r = in_config["ReintentosReprocesamiento"]
         maquina      = socket.gethostname()
 
         # ----------------------------------------------------------------
@@ -490,8 +490,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             )
         else:
             ruta_screenshots = os.path.join(
-                in_config.get("RutaScreenshots", ""),
-                in_config.get("CarpetaLocatel", ""),
+                in_config["RutaScreenshots"],
+                in_config["CarpetaLocatel"],
                 str(now.year),
                 f"{now.month:02d}",
                 f"{now.day:02d}"
@@ -501,7 +501,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 5: Bucle principal de scraping con Playwright
         # ----------------------------------------------------------------
-        headless   = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        headless   = False if debug else str(in_config["HeadlessChrome"]).lower() == "true"
         proxy_url  = _proxy_sistema_windows()
         proxy_cfg  = {"server": proxy_url} if proxy_url else None
 
@@ -873,14 +873,14 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
 
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
-    nombre_resultado = in_config.get("NombreResultado",     "ReportePricingLOCATEL_")
-    nombre_hoja      = in_config.get("NombreHojaResultado", "ReportePricingLOCATEL")
+    nombre_resultado = in_config["NombreResultado"]
+    nombre_hoja      = in_config["NombreHojaResultado"]
 
     if in_config.get("_debug"):
         ruta_reporte = str(_PROJECT_ROOT / "debug")
         nombre_excel = f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx"
     else:
-        ruta_reporte = in_config.get("RutaReporte", "")
+        ruta_reporte = in_config.get("RutaReporte") or ""
         nombre_excel = f"{nombre_resultado}{fecha_sello}.xlsx"
 
     os.makedirs(ruta_reporte, exist_ok=True)
@@ -896,7 +896,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     )
 
     from_address = in_config.get("_correo", {}).get("usuario", "")
-    reemplazo = {"$NombrePagina$": in_config.get("DrogueriaLocatel", "Locatel")}
+    reemplazo = {"$NombrePagina$": in_config["DrogueriaLocatel"]}
     err = enviar_correo(
         in_config=in_config,
         i_cod_email=100,

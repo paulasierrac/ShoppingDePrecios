@@ -321,6 +321,22 @@ Aplican a todas las tablas de resultados (`Locatel`, `Exito`, `Cafam`, etc.):
 
 ## Notas técnicas por farmacia
 
+### Estrategia de extracción JavaScript
+
+Todas las farmacias usan `page.evaluate()` de Playwright para extraer datos del DOM, pero con enfoques distintos:
+
+| Farmacia | Estrategia | Detalle |
+|----------|-----------|---------|
+| Cafam | **Bloque JS unificado** | Un solo `page.evaluate()` recorre las tarjetas Doofinder y devuelve un objeto con todos los campos |
+| Cruz Verde | **Bloque JS unificado** | Un solo `page.evaluate()` extrae nombre, precio, PUM e INVIMA de la página de detalle Angular |
+| Éxito | **JS → parse Python** | JS obtiene el `innerHTML` completo de las tarjetas; Python lo parsea con `_entre()` buscando clases CSS por nombre |
+| Locatel | **JS por campo** | Un `page.evaluate()` independiente por cada dato (título, precio, disponibilidad, marca) |
+| Farmatodo | **JS por campo** | Helper `_js_selector(selector)` ejecuta `querySelector(sel)?.textContent` por cada campo |
+
+> **Nota sobre Éxito:** el enfoque de parsear HTML con `_entre()` es frágil ante cambios de clases CSS (los nombres como `styles_name__qQJiK` son generados por el bundler y pueden cambiar entre deploys). Las farmacias con bloque JS unificado son más robustas porque trabajan con la estructura semántica del DOM, no con nombres de clases.
+
+---
+
 ### Éxito
 - El scraping se realiza sobre la **página de resultados de búsqueda** (`/s?q=EAN`). La URL del producto almacenada puede ser la URL de búsqueda (si el sitio no redirige) o la URL directa del producto (si Éxito la incluye en el HTML de resultados).
 - El `PrecioUnitario` se extrae de la clase `.product-unit_price-unit__text__qeheS`. No todos los productos lo muestran en la página de resultados.

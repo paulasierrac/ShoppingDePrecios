@@ -37,7 +37,7 @@ def hu00_despliegue_ambiental() -> tuple:
         cfg_base = obtener_config()
         out_config.update(cfg_base)
         out_config["_debug"] = os.environ.get("RPA_DEBUG", "").lower() == "true"
-        esquema      = out_config.get("Scheme", "[ShoppingDePrecios]")
+        esquema      = out_config["Scheme"]
         tabla_params = "[Parametros]"
 
         write_log("Info", "HU00: Comienza la HU00", task_name, out_config)
@@ -64,29 +64,18 @@ def hu00_despliegue_ambiental() -> tuple:
         write_log("Info", "HU00: Se cargaron los parametros desde BD", task_name, out_config)
 
         # URL de busqueda Cruz Verde: UrlCruzVerde ya termina en query=, solo agregar EAN
-        url_base = out_config.get(_KEY_URL, "https://www.cruzverde.com.co/search?query=")
+        url_base = out_config[_KEY_URL]
         out_config["UrlCruzVerde"] = url_base + "REEMPLAZAR"
 
-        out_config.setdefault("NombreIniciativaCruzVerde", _NOMBRE_INICIATIVA)
-        out_config.setdefault("DrogueriaCruzVerde",        _DROGUERIA)
-        out_config.setdefault("NombreHojaResultado",       "ReportePricingCruzVerde")
-        out_config.setdefault("ReintentosHu",              "3")
-        out_config.setdefault("ReintentosReprocesamiento", "0")
-        out_config.setdefault("DiasCaidaDb",               "365")
-        out_config.setdefault("MeseslimpiezaLog",           "12")
-        out_config.setdefault("MesesLimpiezaScreenshots",  "12")
-        out_config.setdefault("MesesLimpiezaReportes",     "12")
-        out_config.setdefault("MesesLimpiezaInsumos",      "12")
-        out_config.setdefault("NombreResultado",           "ReportePricing")
-        out_config.setdefault("LoteCruzVerde",             "1000")
-        out_config.setdefault("DelayCruzVerde",            "300")
+        out_config["NombreIniciativaCruzVerde"] = _NOMBRE_INICIATIVA
+        out_config["DrogueriaCruzVerde"]        = _DROGUERIA
 
         carpetas = [
-            out_config.get("RutaInsumos",    ""),
-            out_config.get("PathLog",        ""),
-            out_config.get("RutaTemp",       ""),
-            out_config.get("RutaScreenshots",""),
-            out_config.get("RutaReporte",    ""),
+            out_config.get("RutaInsumos")     or "",
+            out_config.get("PathLog")         or "",
+            out_config.get("RutaTemp")        or "",
+            out_config.get("RutaScreenshots") or "",
+            out_config.get("RutaReporte")     or "",
         ]
         for carpeta in carpetas:
             if carpeta and not os.path.isdir(carpeta):
@@ -97,9 +86,9 @@ def hu00_despliegue_ambiental() -> tuple:
 
         write_log("Info", "HU00: Se realizo validacion de carpetas", task_name, out_config)
 
-        meses_log       = int(out_config.get("MeseslimpiezaLog", "12"))
+        meses_log       = int(out_config["MeseslimpiezaLog"])
         fecha_corte_log = datetime.now() - relativedelta(months=meses_log)
-        path_log        = out_config.get("PathLog", "")
+        path_log        = out_config.get("PathLog") or ""
         if os.path.isdir(path_log):
             for archivo in Path(path_log).glob("*.txt"):
                 try:
@@ -109,9 +98,9 @@ def hu00_despliegue_ambiental() -> tuple:
                     pass
         write_log("Info", f"HU00: Limpieza de Logs — {meses_log} meses", task_name, out_config)
 
-        meses_ss       = int(out_config.get("MesesLimpiezaScreenshots", "12"))
+        meses_ss       = int(out_config["MesesLimpiezaScreenshots"])
         fecha_corte_ss = datetime.now() - relativedelta(months=meses_ss)
-        ruta_ss        = out_config.get("RutaScreenshots", "")
+        ruta_ss        = out_config.get("RutaScreenshots") or ""
         if os.path.isdir(ruta_ss):
             for ca in Path(ruta_ss).iterdir():
                 if ca.is_dir():
@@ -124,9 +113,9 @@ def hu00_despliegue_ambiental() -> tuple:
                                 pass
         write_log("Info", f"HU00: Limpieza de Screenshots — {meses_ss} meses", task_name, out_config)
 
-        meses_rep       = int(out_config.get("MesesLimpiezaReportes", "12"))
+        meses_rep       = int(out_config["MesesLimpiezaReportes"])
         fecha_corte_rep = datetime.now() - relativedelta(months=meses_rep)
-        ruta_rep        = out_config.get("RutaReporte", "")
+        ruta_rep        = out_config.get("RutaReporte") or ""
         if os.path.isdir(ruta_rep):
             for d in Path(ruta_rep).iterdir():
                 if d.is_dir():
@@ -137,9 +126,9 @@ def hu00_despliegue_ambiental() -> tuple:
                         pass
         write_log("Info", f"HU00: Limpieza de Reportes — {meses_rep} meses", task_name, out_config)
 
-        meses_ins       = int(out_config.get("MesesLimpiezaInsumos", "12"))
+        meses_ins       = int(out_config["MesesLimpiezaInsumos"])
         fecha_corte_ins = datetime.now() - relativedelta(months=meses_ins)
-        ruta_proc       = out_config.get("RutaProcesados", "")
+        ruta_proc       = out_config.get("RutaProcesados") or ""
         if os.path.isdir(ruta_proc):
             for archivo in Path(ruta_proc).iterdir():
                 if archivo.is_file():
@@ -151,10 +140,10 @@ def hu00_despliegue_ambiental() -> tuple:
         write_log("Info", f"HU00: Limpieza de Insumos procesados — {meses_ins} meses", task_name, out_config)
 
         fecha_hoy    = datetime.now().strftime("%Y-%m-%d")
-        ultima_limpi = str(out_config.get("LimpiezaDB", "")).strip()[:10]
+        ultima_limpi = str(out_config.get("LimpiezaDB") or "").strip()[:10]
         if ultima_limpi != fecha_hoy:
-            dias_caida = out_config.get("DiasCaidaDb", "365")
-            tabla_ex   = out_config.get("TablaCruzVerde", "[CruzVerde]")
+            dias_caida = out_config["DiasCaidaDb"]
+            tabla_ex   = out_config["TablaCruzVerde"]
             conn   = conectar_bd(out_config)
             cursor = conn.cursor()
             cursor.execute(

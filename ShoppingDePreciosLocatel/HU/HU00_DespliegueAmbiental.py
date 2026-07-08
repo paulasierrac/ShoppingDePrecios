@@ -39,7 +39,7 @@ def hu00_despliegue_ambiental() -> tuple:
         cfg_base = obtener_config()
         out_config.update(cfg_base)           # _db, _correo, Scheme
         out_config["_debug"] = os.environ.get("RPA_DEBUG", "").lower() == "true"
-        esquema       = out_config.get("Scheme", "[ShoppingDePrecios]")
+        esquema       = out_config["Scheme"]
         tabla_params  = "[Parametros]"
 
         # ----------------------------------------------------------------
@@ -72,41 +72,19 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 3: Defaults de seguridad — solo aplican si BD no tiene el parametro
         # ----------------------------------------------------------------
-        out_config["TablaParametros"] = tabla_params  # constante de arranque
-
-        out_config.setdefault("NombreIniciativaLocatel", "Shopping de precios Locatel")
-        out_config.setdefault("DrogueriaLocatel",        "LOCATEL")
-        out_config.setdefault("TablaLocatel",            "[Locatel]")
-        out_config.setdefault("LoteLocatel",             "50")
-        out_config.setdefault("ArchivoInsumo",           "InsumoPricing.xlsx")
-        out_config.setdefault("ArchivoEnvioCorreos",     "EnvioCorreos.xlsx")
-        out_config.setdefault("SheetTicketInsumo",       "TicketInsumo")
-        out_config.setdefault("SheetEnvioCorreos",       "EnvioCorreos")
-        out_config.setdefault("TablaTicketInsumo",       "[TicketInsumo]")
-        out_config.setdefault("TablaEnvioCorreos",       "[EnvioCorreos]")
-        out_config.setdefault("CodigoRobot",             "SPIDER")
-        out_config.setdefault("ActivarLog",              "True")
-        out_config.setdefault("ReintentosHu",              "3")
-        out_config.setdefault("ReintentosReprocesamiento", "0")
-        out_config.setdefault("DiasCaidaDb",               "365")
-        out_config.setdefault("MeseslimpiezaLog",           "12")
-        out_config.setdefault("MesesLimpiezaScreenshots",  "12")
-        out_config.setdefault("MesesLimpiezaReportes",     "12")
-        out_config.setdefault("MesesLimpiezaInsumos",      "12")
-        out_config.setdefault("NombreResultado",           "ReportePricingLocatel_")
-        if out_config.get("NombreResultado") in ("ReportePricing", "ReportePricingLocatel"):
-            out_config["NombreResultado"] = "ReportePricingLocatel_"
-        out_config.setdefault("NombreHojaResultado",       "ReportePricingLOCATEL")
+        out_config["TablaParametros"]         = tabla_params
+        out_config["NombreIniciativaLocatel"] = "Shopping de precios Locatel"
+        out_config["DrogueriaLocatel"]        = "LOCATEL"
 
         # ----------------------------------------------------------------
         # PASO 4: Validacion de carpetas (crear si no existen)
         # ----------------------------------------------------------------
         carpetas = [
-            out_config.get("RutaInsumos", ""),
-            out_config.get("PathLog", ""),
-            out_config.get("RutaTemp", ""),
-            out_config.get("RutaReporte", ""),
-            out_config.get("RutaScreenshots", ""),
+            out_config.get("RutaInsumos")     or "",
+            out_config.get("PathLog")         or "",
+            out_config.get("RutaTemp")        or "",
+            out_config.get("RutaReporte")     or "",
+            out_config.get("RutaScreenshots") or "",
         ]
         for carpeta in carpetas:
             if carpeta and not os.path.isdir(carpeta):
@@ -117,7 +95,7 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 5: Limpieza de Logs
         # ----------------------------------------------------------------
-        meses_log = int(out_config.get("MeseslimpiezaLog", "12"))
+        meses_log = int(out_config["MeseslimpiezaLog"])
         fecha_corte_log = datetime.now() - relativedelta(months=meses_log)
         path_log = out_config["PathLog"]
 
@@ -134,7 +112,7 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 6: Limpieza de Screenshots
         # ----------------------------------------------------------------
-        meses_ss = int(out_config.get("MesesLimpiezaScreenshots", "3"))
+        meses_ss = int(out_config["MesesLimpiezaScreenshots"])
         fecha_corte_ss = datetime.now() - relativedelta(months=meses_ss)
 
         if os.path.isdir(out_config["RutaScreenshots"]):
@@ -153,7 +131,7 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 7: Limpieza de Reportes
         # ----------------------------------------------------------------
-        meses_rep = int(out_config.get("MesesLimpiezaReportes", "6"))
+        meses_rep = int(out_config["MesesLimpiezaReportes"])
         fecha_corte_rep = datetime.now() - relativedelta(months=meses_rep)
 
         if os.path.isdir(out_config["RutaReporte"]):
@@ -170,9 +148,9 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 8: Limpieza de Insumos procesados
         # ----------------------------------------------------------------
-        meses_ins = int(out_config.get("MesesLimpiezaInsumos", "6"))
+        meses_ins = int(out_config["MesesLimpiezaInsumos"])
         fecha_corte_ins = datetime.now() - relativedelta(months=meses_ins)
-        ruta_proc = out_config.get("RutaProcesados", "")
+        ruta_proc = out_config.get("RutaProcesados") or ""
 
         if os.path.isdir(ruta_proc):
             for archivo in Path(ruta_proc).iterdir():
@@ -188,7 +166,7 @@ def hu00_despliegue_ambiental() -> tuple:
         # ----------------------------------------------------------------
         # PASO 9: Limpieza de BD
         # ----------------------------------------------------------------
-        dias_caida = out_config.get("DiasCaidaDb", "365")
+        dias_caida = out_config["DiasCaidaDb"]
         conn   = conectar_bd(out_config)
         cursor = conn.cursor()
         cursor.execute(
@@ -196,7 +174,7 @@ def hu00_despliegue_ambiental() -> tuple:
             f"WHERE FechaInicio < DATEADD(DAY, -{dias_caida}, GETDATE())"
         )
         cursor.execute(
-            f"DELETE FROM {esquema}.{out_config.get('TablaLocatel', '[Locatel]')} "
+            f"DELETE FROM {esquema}.{out_config['TablaLocatel']} "
             f"WHERE FechaInicio < DATEADD(DAY, -{dias_caida}, GETDATE())"
         )
         cursor.execute(

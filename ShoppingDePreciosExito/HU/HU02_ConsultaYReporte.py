@@ -63,7 +63,6 @@ ESPERA_3S = 3000
 ESPERA_5S = 5000
 
 # Numero de productos a procesar por lote de DB (modo normal)
-_LOTE_DEFAULT = 50
 
 
 # ============================================================
@@ -353,10 +352,10 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
     browser     = None
 
     try:
-        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_ex     = in_config.get("TablaExito",        "Exito")
-        tabla_ins    = in_config.get("TablaTicketInsumo", "TicketInsumo")
-        url_template = in_config.get("UrlExito", "")
+        esquema      = in_config["Scheme"]
+        tabla_ex     = in_config["TablaExito"]
+        tabla_ins    = in_config["TablaTicketInsumo"]
+        url_template = in_config.get("UrlExito") or ""
         maquina      = socket.gethostname()
 
         # ----------------------------------------------------------------
@@ -441,8 +440,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             )
         else:
             ruta_screenshots = os.path.join(
-                in_config.get("RutaScreenshots", ""),
-                in_config.get("CarpetaExito", "Exito\\"),
+                in_config["RutaScreenshots"],
+                in_config["CarpetaExito"],
                 str(now.year),
                 f"{now.month:02d}",
                 f"{now.day:02d}",
@@ -458,7 +457,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 "Verificar tabla [ShoppingDePrecios].[Parametros]."
             )
 
-        headless  = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        headless  = False if debug else str(in_config["HeadlessChrome"]).lower() == "true"
         proxy_cfg = _proxy_sistema_windows()
 
         write_log("Info", "HU02: Inicia consulta de productos por EAN", task_name, in_config)
@@ -541,8 +540,8 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                                _conectar=None):
     if _conectar is None:
         _conectar = conectar_bd
-    lote  = int(in_config.get("CantExito", str(_LOTE_DEFAULT)))
-    delay = int(in_config.get("SegExito",  "5"))
+    lote  = int(in_config["CantExito"])
+    delay = int(in_config["SegExito"])
 
     hay_mas = True
     while hay_mas:
@@ -813,15 +812,15 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
 
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
-    nombre_resultado = in_config.get("NombreResultado",     "ReportePricingExito_")
-    nombre_hoja      = in_config.get("NombreHojaResultado", "ReportePricingExito")
+    nombre_resultado = in_config["NombreResultado"]
+    nombre_hoja      = in_config["NombreHojaResultado"]
 
     _es_debug = debug or bool(in_config.get("_debug"))
     if _es_debug:
         ruta_reporte = str(_PROJECT_ROOT / "debug")
         ruta_excel   = os.path.join(ruta_reporte, f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx")
     else:
-        ruta_reporte = in_config.get("RutaReporte", "")
+        ruta_reporte = in_config.get("RutaReporte") or ""
         ruta_excel   = os.path.join(ruta_reporte, f"{nombre_resultado}{fecha_sello}.xlsx")
 
     os.makedirs(ruta_reporte, exist_ok=True)
@@ -836,7 +835,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
     )
 
     from_address = in_config.get("_correo", {}).get("usuario", "")
-    reemplazo    = {"$NombrePagina$": in_config.get("DrogueriaExito", "Exito")}
+    reemplazo    = {"$NombrePagina$": in_config["DrogueriaExito"]}
     err = enviar_correo(
         in_config=in_config,
         i_cod_email=100,

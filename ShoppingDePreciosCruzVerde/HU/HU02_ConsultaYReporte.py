@@ -54,7 +54,6 @@ from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, enviar_co
 
 ESPERA_CARGA  = 6000    # ms — Angular necesita tiempo extra para hidratar
 ESPERA_REINT  = 3000    # ms entre reintentos
-_LOTE_DEFAULT = 100
 
 
 # ============================================================
@@ -335,13 +334,13 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
     pw_instance = None
     browser     = None
     try:
-        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_ex     = in_config.get("TablaCruzVerde",    "[CruzVerde]")
-        tabla_ins    = in_config.get("TablaTicketInsumo", "[TicketInsumo]")
-        url_template = in_config.get("UrlCruzVerde", "")
+        esquema      = in_config["Scheme"]
+        tabla_ex     = in_config["TablaCruzVerde"]
+        tabla_ins    = in_config["TablaTicketInsumo"]
+        url_template = in_config.get("UrlCruzVerde") or ""
         maquina      = socket.gethostname()
-        lote         = int(in_config.get("LoteCruzVerde",  str(_LOTE_DEFAULT)))
-        delay        = int(in_config.get("DelayCruzVerde", "300"))
+        lote         = int(in_config["LoteCruzVerde"])
+        delay        = int(in_config["DelayCruzVerde"])
 
         # ── PASO 1 + PASO 2 ──────────────────────────────────────────────
         if debug:
@@ -410,14 +409,14 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                                / str(now.year) / f"{now.month:02d}" / f"{now.day:02d}")
         else:
             ruta_ss_base = os.path.join(
-                in_config.get("RutaScreenshots", ""),
-                in_config.get("CarpetaCruzVerde", "CruzVerde\\"),
+                in_config["RutaScreenshots"],
+                in_config["CarpetaCruzVerde"],
                 str(now.year), f"{now.month:02d}", f"{now.day:02d}",
             )
         os.makedirs(ruta_ss_base, exist_ok=True)
 
         # ── PASO 4: Bucle de scraping ─────────────────────────────────────
-        headless  = False if debug else str(in_config.get("HeadlessChrome", "true")).lower() == "true"
+        headless  = False if debug else str(in_config["HeadlessChrome"]).lower() == "true"
         proxy_cfg = _proxy_sistema_windows()
 
         write_log("Info", "HU02: Inicia consulta de productos por EAN", task_name, in_config)
@@ -535,7 +534,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
 
 def _scraping_debug(browser, in_config, esquema, tabla_ins,
                     url_template, ruta_ss_base, task_name):
-    lote_debug = int(in_config.get("LoteDebug", "3"))
+    lote_debug = int(in_config["LoteDebug"])
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
     cur_sq.execute(
@@ -730,14 +729,14 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
         return
 
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
-    nombre_res  = in_config.get("NombreResultado", "ReportePricing")
-    nombre_hoja = in_config.get("NombreHojaResultado", "ReportePricingCruzVerde")
+    nombre_res  = in_config["NombreResultado"]
+    nombre_hoja = in_config["NombreHojaResultado"]
 
     if in_config.get("_debug"):
         ruta_rep   = str(_PROJECT_ROOT / "debug")
         ruta_excel = os.path.join(ruta_rep, f"DEBUG_{nombre_res}{fecha_sello}.xlsx")
     else:
-        ruta_rep   = in_config.get("RutaReporte", "")
+        ruta_rep   = in_config.get("RutaReporte") or ""
         ruta_excel = os.path.join(ruta_rep, f"{nombre_res}{fecha_sello}.xlsx")
 
     os.makedirs(ruta_rep, exist_ok=True)
@@ -747,7 +746,7 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
 
     write_log("Info", f"HU02: Reporte generado en ({ruta_excel})", task_name, in_config)
     from_addr = in_config.get("_correo", {}).get("usuario", "")
-    reemplazo = {"$NombrePagina$": in_config.get("DrogueriaCruzVerde", "Cruz Verde")}
+    reemplazo = {"$NombrePagina$": in_config["DrogueriaCruzVerde"]}
     err = enviar_correo(in_config=in_config, i_cod_email=100, i_from_address=from_addr,
                         i_replace_in_message=reemplazo, i_replace_in_subject=reemplazo,
                         i_html_format=False, i_attachment=[ruta_excel])

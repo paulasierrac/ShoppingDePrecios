@@ -52,12 +52,12 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # PASO 1: Parametrizacion inicial
         # ----------------------------------------------------------------
         ruta_insumo = os.path.join(
-            in_config.get("RutaInsumos", ""),
-            in_config.get("ArchivoInsumo", "")
+            in_config["RutaInsumos"],
+            in_config["ArchivoInsumo"]
         )
         # En debug: usar Insumo/ local del proyecto (evita rutas de red)
         if in_config.get("_debug"):
-            _nombre_ins = in_config.get("ArchivoInsumo", "InsumoPricing.xlsx")
+            _nombre_ins = in_config["ArchivoInsumo"]
             ruta_insumo = str(Path(__file__).resolve().parent.parent.parent / "Insumo" / _nombre_ins)
 
         # ----------------------------------------------------------------
@@ -73,7 +73,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 3: Validar encabezados del Excel
         # ----------------------------------------------------------------
-        sheet_insumo = in_config.get("SheetTicketInsumo", "TicketInsumo")
+        sheet_insumo = in_config["SheetTicketInsumo"]
 
         df_header = pd.read_excel(
             ruta_insumo,
@@ -113,7 +113,7 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 4: Convertir Excel a CSV temporal
         # ----------------------------------------------------------------
-        ruta_csv = os.path.join(in_config.get("RutaTemp", ""), "Insumo.csv")
+        ruta_csv = os.path.join(in_config["RutaTemp"], "Insumo.csv")
         # En debug: CSV temporal en carpeta local debug/temp/
         if in_config.get("_debug"):
             _dir_tmp = Path(__file__).resolve().parent.parent.parent / "debug" / "temp"
@@ -139,8 +139,8 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # PASO 5: Cargar CSV a Base de Datos
         # ----------------------------------------------------------------
         maquina      = socket.gethostname()
-        esquema      = in_config.get("Scheme", "[ShoppingDePrecios]")
-        tabla_insumo = in_config.get("TablaTicketInsumo", "TicketInsumo")
+        esquema      = in_config["Scheme"]
+        tabla_insumo = in_config["TablaTicketInsumo"]
 
         if in_config.get("_debug"):
             # DEBUG: insertar en BD Dev (SQL Server) en lugar de pruebas.db
@@ -229,8 +229,8 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
                       "HU01: [DEBUG] Archivo insumo no movido (modo debug — reutilizable)",
                       task_name, in_config)
         else:
-            ruta_insumos    = in_config.get("RutaInsumos", "")
-            carpeta_proc    = in_config.get("CarpetaProcesados", "Procesados\\")
+            ruta_insumos    = in_config["RutaInsumos"]
+            carpeta_proc    = in_config["CarpetaProcesados"]
             ruta_procesados = os.path.join(ruta_insumos, carpeta_proc)
             os.makedirs(ruta_procesados, exist_ok=True)
 
