@@ -88,6 +88,9 @@ def hu00_despliegue_ambiental() -> tuple:
 
         out_config["NombreIniciativaExito"] = _NOMBRE_INICIATIVA
         out_config["DrogueriaExito"]        = _DROGUERIA
+        out_config["NombreResultado"]       = "ReportePricingExito_"
+        out_config["NombreHojaResultado"]   = "ReportePricingExito"
+        out_config.setdefault("HeadlessChrome", "true")
 
         # ----------------------------------------------------------------
         # PASO 4: Validacion de carpetas (crear si no existen)

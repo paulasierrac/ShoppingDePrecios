@@ -69,6 +69,9 @@ def hu00_despliegue_ambiental() -> tuple:
 
         out_config["NombreIniciativaFarmatodo"] = _NOMBRE_INICIATIVA
         out_config["DrogueriaFarmatodo"]        = _DROGUERIA
+        out_config["NombreResultado"]           = "ReportePricingFarmatodo_"
+        out_config["NombreHojaResultado"]       = "ReportePricingFarmatodo"
+        out_config.setdefault("HeadlessChrome", "true")
 
         carpetas = [
             out_config.get("RutaInsumos")     or "",

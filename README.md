@@ -17,6 +17,7 @@ Robot RPA (migración de Automation Anywhere a Python/Playwright) que extrae pre
 - [Ejecución](#ejecución)
 - [Modo debug](#modo-debug)
 - [Base de datos](#base-de-datos)
+  - [Mantenimiento de la tabla Parametros](#mantenimiento-de-la-tabla-parametros)
 - [Convenciones de precios](#convenciones-de-precios)
 - [Estados de registros](#estados-de-registros)
 - [Notas técnicas por farmacia](#notas-técnicas-por-farmacia)
@@ -281,6 +282,45 @@ El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx
 
 **Grupo B** (Éxito, Farmatodo) — sin `Observaciones` ni `Reintentos`.
 
+### Mantenimiento de la tabla Parametros
+
+Ejecutar este script al desplegar en un ambiente nuevo o cuando se detecte un `KeyError` en los logs referenciando un parámetro de configuración:
+
+```sql
+-- ============================================================
+-- Parámetros requeridos en [ShoppingDePrecios].[Parametros]
+-- Ejecutar en cada ambiente (dev / qa / prod)
+-- ============================================================
+
+-- HeadlessChrome — CRÍTICO
+-- Sin este parámetro todos los HU02 fallan en producción con KeyError.
+-- En producción usar "true"; en ambientes de prueba con ventana visible usar "false".
+IF NOT EXISTS (
+    SELECT 1 FROM [ShoppingDePrecios].[Parametros] WHERE Nombre = 'HeadlessChrome'
+)
+    INSERT INTO [ShoppingDePrecios].[Parametros] (Nombre, Valor, Descripcion)
+    VALUES (
+        'HeadlessChrome',
+        'true',
+        'Variable global, modo headless del navegador Chrome (true=sin ventana en produccion, false=con ventana)'
+    );
+
+-- NombreResultado y NombreHojaResultado
+-- El código los sobreescribe por farmacia desde HU00 (no depende del valor de BD),
+-- pero se corrigen aquí para mantener la tabla consistente.
+UPDATE [ShoppingDePrecios].[Parametros]
+SET    Valor       = 'ReportePricing',
+       Descripcion = 'Variable global, prefijo base del archivo de reporte (HU00 agrega el nombre de farmacia)'
+WHERE  Nombre = 'NombreResultado';
+
+UPDATE [ShoppingDePrecios].[Parametros]
+SET    Valor       = 'ReportePricing',
+       Descripcion = 'Variable global, nombre base de la hoja Excel (HU00 agrega el nombre de farmacia)'
+WHERE  Nombre = 'NombreHojaResultado';
+```
+
+> **Nota sobre `NombreResultado` / `NombreHojaResultado`:** la tabla `[Parametros]` contiene un único valor compartido para todas las farmacias, pero cada farmacia necesita un nombre distinto. Cada `HU00_DespliegueAmbiental.py` sobreescribe estos valores con el nombre correcto para su farmacia (p. ej. `ReportePricingExito_` / `ReportePricingExito`) sin importar lo que esté en BD.
+
 ### Formato de precios colombiano
 
 - Separador de miles: `.` (punto) → se elimina con `REPLACE('.', '')`
@@ -370,6 +410,16 @@ Todas las farmacias usan `page.evaluate()` de Playwright para extraer datos del 
 ---
 
 ## Errores frecuentes y soluciones
+
+### `KeyError: 'HeadlessChrome'` / `KeyError: 'NombreHojaResultado'` u otro parámetro
+
+El bot hace acceso directo (`config["Clave"]`) a todos los parámetros de `[Parametros]`. Si la clave no existe en BD, lanza `KeyError` en HU02 o HU00 y aborta la ejecución.
+
+**Causa más común:** despliegue en un ambiente nuevo donde la tabla `[Parametros]` no tiene todas las filas requeridas, o una fila con `Valor = NULL`.
+
+**Solución:** ejecutar el script de mantenimiento de la sección [Mantenimiento de la tabla Parametros](#mantenimiento-de-la-tabla-parametros).
+
+---
 
 ### `Executable doesn't exist at ...ms-playwright\chromium...`
 

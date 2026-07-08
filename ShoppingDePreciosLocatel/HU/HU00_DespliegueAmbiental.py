@@ -75,6 +75,9 @@ def hu00_despliegue_ambiental() -> tuple:
         out_config["TablaParametros"]         = tabla_params
         out_config["NombreIniciativaLocatel"] = "Shopping de precios Locatel"
         out_config["DrogueriaLocatel"]        = "LOCATEL"
+        out_config["NombreResultado"]         = "ReportePricingLOCATEL_"
+        out_config["NombreHojaResultado"]     = "ReportePricingLOCATEL"
+        out_config.setdefault("HeadlessChrome", "true")
 
         # ----------------------------------------------------------------
         # PASO 4: Validacion de carpetas (crear si no existen)
