@@ -52,9 +52,11 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, enviar_correo
 
 
-ESPERA_CARGA  = 30000   # ms — la pagina de Cafam es pesada
+ESPERA_CARGA  = 30000   # ms — timeout máximo esperando resultados Doofinder
 ESPERA_REINT  = 3000    # ms entre reintentos
-_MAX_POS      = 4       # posiciones de resultado a probar (0-3)
+
+# Selector que indica que Doofinder terminó de cargar (resultados o sin resultados)
+_SEL_RESULTADO = ".dfd-card-live, .dfd-no-results"
 
 
 # ============================================================
@@ -160,7 +162,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                           f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
                           task_name, in_config)
                 return resultado
-            page.wait_for_timeout(ESPERA_CARGA)
+            try:
+                page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
+            except PlaywrightTimeout:
+                pass
         else:
             # EANs siguientes: reusar la pagina y buscar via el input de Doofinder.
             # Crear nueva pagina por EAN genera ERR_ABORTED porque Cafam usa
@@ -171,7 +176,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             try:
                 page.fill('.dfd-searchbox-input', ean)
                 page.keyboard.press('Enter')
-                page.wait_for_timeout(ESPERA_CARGA)
+                try:
+                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
+                except PlaywrightTimeout:
+                    pass
             except Exception as search_err:
                 write_log("Warning",
                           f"HU02: Error buscando EAN ({ean}) via input Doofinder: {search_err}",
@@ -179,7 +187,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 # Fallback: navegacion completa
                 try:
                     page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-                    page.wait_for_timeout(ESPERA_CARGA)
+                    try:
+                        page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
+                    except PlaywrightTimeout:
+                        pass
                 except Exception as nav_err:
                     write_log("Warning",
                               f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
@@ -198,7 +209,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 ) or False
                 break
             except Exception:
-                page.wait_for_timeout(ESPERA_REINT)
+                try:
+                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
+                except PlaywrightTimeout:
+                    pass
 
         if sin_resultados:
             write_log("Info", f"HU02: EAN ({ean}) — Sin resultados en Cafam",
@@ -211,7 +225,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         # disponibilidad (data-item JSON). No hace falta navegar al detalle.
         # Se excluyen tarjetas dentro de .dfd-no-results (recomendados).
         datos = None
-        for _ in range(3):
+        for intento in range(3):
             try:
                 datos = page.evaluate("""
                     (() => {
@@ -271,11 +285,17 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 """)
                 if datos and datos.get("url"):
                     break
-                page.wait_for_timeout(ESPERA_REINT)
+                try:
+                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
+                except PlaywrightTimeout:
+                    pass
             except Exception as e:
                 write_log("Warning", f"HU02: JS error leyendo tarjeta EAN ({ean}): {e}",
                           task_name, in_config)
-                page.wait_for_timeout(ESPERA_REINT)
+                try:
+                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
+                except PlaywrightTimeout:
+                    pass
 
         if not datos or not datos.get("url"):
             write_log("Info",

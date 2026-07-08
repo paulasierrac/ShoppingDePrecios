@@ -123,6 +123,53 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
         pass
 
 
+def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
+    """Detecta y cierra el modal 'Selecciona tu ciudad' de Farmatodo.
+
+    Intenta hacer clic en 'Bogotá' o en el primer botón de ciudad disponible.
+    Usa Escape como último recurso. El modal solo aparece en la primera carga;
+    una vez seleccionada la ciudad la cookie persiste en el contexto.
+    """
+    try:
+        titulo = page.evaluate(
+            "document.querySelector('.text-title')?.textContent?.trim() || ''"
+        )
+        if "ciudad" not in str(titulo).lower():
+            return
+
+        write_log("Info", "HU02: Modal 'Selecciona tu ciudad' detectado — intentando cerrar",
+                  task_name, in_config)
+
+        cerrado = False
+        for sel in [
+            "button:has-text('Bogotá')",
+            "a:has-text('Bogotá')",
+            "button:has-text('Bogota')",
+            "a:has-text('Bogota')",
+            ".city-selector button",
+            ".location-modal button",
+            ".modal-city button",
+            "button[data-city]",
+            "a[data-city]",
+        ]:
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    page.wait_for_timeout(1500)
+                    cerrado = True
+                    write_log("Info", "HU02: Ciudad seleccionada — modal cerrado", task_name, in_config)
+                    break
+            except Exception:
+                pass
+
+        if not cerrado:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+
 # ============================================================
 # Carga de selectores CSS desde BD
 # ============================================================
@@ -171,6 +218,7 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
     try:
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(ESPERA_CARGA)
+        _cerrar_modal_ciudad(page, task_name, in_config)
 
         nombre_prd  = ""
         precio_con  = ""
@@ -215,6 +263,7 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
                 except Exception:
                     pass
                 page.wait_for_timeout(ESPERA_REINT)
+                _cerrar_modal_ciudad(page, task_name, in_config)
 
         _tomar_screenshot(page, ruta_screenshot)
 
@@ -526,7 +575,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
                 f"INSERT INTO {esquema}.Farmatodo "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Maquina, "
                 " PLU, EAN, Descripcion, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
-                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, PorcDescuento, "
+                " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], "
                 " PrecioFidelizacion, UrlProducto, BannerProducto, RutaImagen) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,

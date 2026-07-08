@@ -137,12 +137,31 @@ def _cerrar_modales_locatel(page: Page, task_name: str, in_config: dict) -> None
     except Exception:
         pass
 
-    # Popup promocional (imágenes, ofertas, etc.) → cerrar con Escape
+    # Popup promocional (imágenes, ofertas, etc.)
+    # Intenta botón "Saltar" por texto o selectores comunes; Escape como fallback.
     try:
         popup = page.query_selector("div.wpn-modal-img-container")
         if popup and popup.is_visible():
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
+            cerrado = False
+            for sel in [
+                "button:has-text('Saltar')",
+                ".wpn-modal-img-container button",
+                "button.wpn-modal-close",
+                "button.wpn-close",
+                "button.wpn-btn-close",
+            ]:
+                try:
+                    btn = page.query_selector(sel)
+                    if btn and btn.is_visible():
+                        btn.click()
+                        page.wait_for_timeout(500)
+                        cerrado = True
+                        break
+                except Exception:
+                    pass
+            if not cerrado:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
             write_log("Info", "HU02: Popup promocional cerrado", task_name, in_config)
     except Exception:
         pass
@@ -521,6 +540,23 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             ]
         )
 
+        # Contexto y página únicos para toda la sesión de scraping.
+        # Reutilizar la misma pestaña evita que el popup promocional de Locatel
+        # se dispare en cada EAN (solo aparece en la primera carga) y reduce
+        # las peticiones redundantes que pueden activar bloqueos anti-bot.
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            locale="es-CO",
+            viewport={"width": 1920, "height": 1080},
+            ignore_https_errors=True
+        )
+        page = context.new_page()
+        primer_ean = True
+
         hay_mas = True
         while hay_mas:
             conn   = conectar_bd(in_config)
@@ -560,17 +596,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 hay_mas = False
                 break
 
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/122.0.0.0 Safari/537.36"
-                ),
-                locale="es-CO",
-                viewport={"width": 1920, "height": 1080},
-                ignore_https_errors=True
-            )
-
             for i, row in enumerate(registros):
                 id_ticket     = str(row[0])
                 ean           = str(row[1])
@@ -599,25 +624,17 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                         task_name, in_config
                     )
 
-                    # Página nueva por EAN para evitar que un estado corrupto
-                    # de la navegacion anterior bloquee los siguientes.
-                    page = context.new_page()
-                    try:
-                        resultado = _consultar_ean(
-                            page=page,
-                            ean=ean,
-                            palabra_clave=palabra_clave,
-                            url_template=url_template,
-                            ruta_screenshot=ruta_ss,
-                            in_config=in_config,
-                            task_name=task_name,
-                            primer_ean=(i == 0),
-                        )
-                    finally:
-                        try:
-                            page.close()
-                        except Exception:
-                            pass
+                    resultado = _consultar_ean(
+                        page=page,
+                        ean=ean,
+                        palabra_clave=palabra_clave,
+                        url_template=url_template,
+                        ruta_screenshot=ruta_ss,
+                        in_config=in_config,
+                        task_name=task_name,
+                        primer_ean=primer_ean,
+                    )
+                    primer_ean = False
 
                     conn   = conectar_bd(in_config)
                     cursor = conn.cursor()
@@ -677,11 +694,19 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                         conn.close()
                     except Exception:
                         pass
-
-            try:
-                context.close()
-            except Exception:
-                pass
+                    # Recuperar la página si quedó en mal estado
+                    try:
+                        page.goto("about:blank", timeout=5000)
+                    except Exception:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                        try:
+                            page = context.new_page()
+                            primer_ean = True
+                        except Exception:
+                            pass
 
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
@@ -692,6 +717,15 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             hay_mas = cnt_restantes > 0
             conn.close()
             write_log("Info", f"HU02: Registros restantes con Estado=1: {cnt_restantes}", task_name, in_config)
+
+        try:
+            page.close()
+        except Exception:
+            pass
+        try:
+            context.close()
+        except Exception:
+            pass
 
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
