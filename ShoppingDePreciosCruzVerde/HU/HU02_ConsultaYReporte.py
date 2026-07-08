@@ -363,6 +363,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 DELETE b FROM {esquema}.{tabla_ex} b
                 JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
                 WHERE b.FechaInicio < a.FechaInicio
+                   OR b.Estado IN ('100', '199', '3')
             """)
             cursor.execute(f"""
                 SELECT a.Id FROM {esquema}.{tabla_ins} a

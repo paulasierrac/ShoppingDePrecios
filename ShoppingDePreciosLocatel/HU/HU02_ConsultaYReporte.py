@@ -440,6 +440,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             DELETE b FROM {esquema}.{tabla_loc} b
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
             WHERE b.FechaInicio < a.FechaInicio
+               OR b.Estado IN ('100', '199', '3')
         """)
         write_log("Info", f"HU02: Registros anteriores eliminados de {tabla_loc}: {cursor.rowcount}", task_name, in_config)
 

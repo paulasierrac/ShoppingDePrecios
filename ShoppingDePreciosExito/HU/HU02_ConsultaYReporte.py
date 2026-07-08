@@ -370,14 +370,17 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         cnt_insumo = cursor.fetchone()[0]
         write_log("Info", f"HU02: TicketInsumo tiene {cnt_insumo} registros con Estado=1", task_name, in_config)
 
+        # Limpiar registros obsoletos (lote anterior) y ya reportados (mismo lote
+        # re-ejecutado): permite repetir HU02 sobre el mismo TicketInsumo.
         cursor.execute(f"""
             DELETE b FROM {esquema}.{tabla_ex} b
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
             WHERE b.FechaInicio < a.FechaInicio
+               OR b.Estado IN ('100', '199', '3')
         """)
         filas_eliminadas = cursor.rowcount
         if filas_eliminadas:
-            write_log("Info", f"HU02: DELETE elimino {filas_eliminadas} registros obsoletos de {tabla_ex}", task_name, in_config)
+            write_log("Info", f"HU02: DELETE elimino {filas_eliminadas} registros obsoletos/reportados de {tabla_ex}", task_name, in_config)
 
         cursor.execute(f"""
             SELECT COUNT(*) FROM {esquema}.{tabla_ins} a

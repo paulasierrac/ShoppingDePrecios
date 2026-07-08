@@ -52,11 +52,8 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, enviar_correo
 
 
-ESPERA_CARGA  = 30000   # ms — timeout máximo esperando resultados Doofinder
+ESPERA_CARGA  = 30000   # ms — la pagina de Cafam es pesada (Doofinder carga async)
 ESPERA_REINT  = 3000    # ms entre reintentos
-
-# Selector que indica que Doofinder terminó de cargar (resultados o sin resultados)
-_SEL_RESULTADO = ".dfd-card-live, .dfd-no-results"
 
 
 # ============================================================
@@ -162,10 +159,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                           f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
                           task_name, in_config)
                 return resultado
-            try:
-                page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
-            except PlaywrightTimeout:
-                pass
+            page.wait_for_timeout(ESPERA_CARGA)
         else:
             # EANs siguientes: reusar la pagina y buscar via el input de Doofinder.
             # Crear nueva pagina por EAN genera ERR_ABORTED porque Cafam usa
@@ -176,10 +170,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             try:
                 page.fill('.dfd-searchbox-input', ean)
                 page.keyboard.press('Enter')
-                try:
-                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
-                except PlaywrightTimeout:
-                    pass
+                page.wait_for_timeout(ESPERA_CARGA)
             except Exception as search_err:
                 write_log("Warning",
                           f"HU02: Error buscando EAN ({ean}) via input Doofinder: {search_err}",
@@ -187,10 +178,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 # Fallback: navegacion completa
                 try:
                     page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-                    try:
-                        page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_CARGA)
-                    except PlaywrightTimeout:
-                        pass
+                    page.wait_for_timeout(ESPERA_CARGA)
                 except Exception as nav_err:
                     write_log("Warning",
                               f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
@@ -209,10 +197,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 ) or False
                 break
             except Exception:
-                try:
-                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
-                except PlaywrightTimeout:
-                    pass
+                page.wait_for_timeout(ESPERA_REINT)
 
         if sin_resultados:
             write_log("Info", f"HU02: EAN ({ean}) — Sin resultados en Cafam",
@@ -285,17 +270,11 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 """)
                 if datos and datos.get("url"):
                     break
-                try:
-                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
-                except PlaywrightTimeout:
-                    pass
+                page.wait_for_timeout(ESPERA_REINT)
             except Exception as e:
                 write_log("Warning", f"HU02: JS error leyendo tarjeta EAN ({ean}): {e}",
                           task_name, in_config)
-                try:
-                    page.wait_for_selector(_SEL_RESULTADO, timeout=ESPERA_REINT)
-                except PlaywrightTimeout:
-                    pass
+                page.wait_for_timeout(ESPERA_REINT)
 
         if not datos or not datos.get("url"):
             write_log("Info",
@@ -407,6 +386,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 DELETE b FROM {esquema}.{tabla_ex} b
                 JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
                 WHERE b.FechaInicio < a.FechaInicio
+                   OR b.Estado IN ('100', '199', '3')
             """)
             cursor.execute(f"""
                 SELECT a.Id FROM {esquema}.{tabla_ins} a
