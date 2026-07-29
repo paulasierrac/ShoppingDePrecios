@@ -410,7 +410,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         tabla_loc    = in_config["TablaLocatel"]
         tabla_ins    = in_config["TablaTicketInsumo"]
         url_template = in_config.get("UrlLocatel") or ""
-        lote         = int(in_config["LoteLocatel"])
+        debug        = in_config.get("_debug", False)
+        lote         = int(in_config["LoteDebug"]) if debug else int(in_config["LoteLocatel"])
         reintentos_r = in_config["ReintentosReprocesamiento"]
         maquina      = socket.gethostname()
 

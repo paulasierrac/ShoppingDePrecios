@@ -543,7 +543,8 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                                _conectar=None):
     if _conectar is None:
         _conectar = conectar_bd
-    lote  = int(in_config["CantExito"])
+    debug = in_config.get("_debug", False)
+    lote  = int(in_config["LoteDebug"]) if debug else int(in_config["CantExito"])
     delay = int(in_config["SegExito"])
 
     hay_mas = True
