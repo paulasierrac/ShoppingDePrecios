@@ -218,11 +218,6 @@ def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
 def _cerrar_modal_direccion(page: Page) -> None:
     """Cierra el modal 'Agrega una dirección' si está visible (aparece en sesiones sin cookies)."""
     try:
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-    except Exception:
-        pass
-    try:
         btn = page.locator("app-add-edit-address button[aria-label='Close']")
         if btn.count() > 0 and btn.first.is_visible():
             btn.first.click()
@@ -278,7 +273,13 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
 
     try:
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(ESPERA_CARGA)
+        try:
+            page.wait_for_selector(
+                ".product-card-handler__detail-description, app-product-card-handler",
+                timeout=ESPERA_CARGA
+            )
+        except Exception:
+            pass
         _cerrar_modal_direccion(page)
 
         nombre_prd  = ""
@@ -548,8 +549,13 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
             locale="es-CO",
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True,
-            geolocation={"latitude": 4.7110, "longitude": -74.0721},
-            permissions=["geolocation"],
+        )
+        # Bloquea silenciosamente la geolocalización para evitar que Farmatodo
+        # detecte la ciudad por IP y redirija a buscar?product=Bogotá
+        context.add_init_script(
+            "Object.defineProperty(navigator,'geolocation',{get:function(){"
+            "return{getCurrentPosition:function(){},watchPosition:function(){return 0;},"
+            "clearWatch:function(){}};}});"
         )
         page = context.new_page()
 
@@ -618,8 +624,13 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
         locale="es-CO",
         viewport={"width": 1920, "height": 1080},
         ignore_https_errors=True,
-        geolocation={"latitude": 4.7110, "longitude": -74.0721},
-        permissions=["geolocation"],
+    )
+    # Bloquea silenciosamente la geolocalización para evitar que Farmatodo
+    # detecte la ciudad por IP y redirija a buscar?product=Bogotá
+    context.add_init_script(
+        "Object.defineProperty(navigator,'geolocation',{get:function(){"
+        "return{getCurrentPosition:function(){},watchPosition:function(){return 0;},"
+        "clearWatch:function(){}};}});"
     )
     page = context.new_page()
 
