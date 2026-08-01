@@ -215,6 +215,22 @@ def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
         pass
 
 
+def _cerrar_modal_direccion(page: Page) -> None:
+    """Cierra el modal 'Agrega una dirección' si está visible (aparece en sesiones sin cookies)."""
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
+    try:
+        btn = page.locator("app-add-edit-address button[aria-label='Close']")
+        if btn.count() > 0 and btn.first.is_visible():
+            btn.first.click()
+            page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
 # ============================================================
 # Carga de selectores CSS desde BD
 # ============================================================
@@ -263,7 +279,7 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
     try:
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(ESPERA_CARGA)
-        _cerrar_modal_ciudad(page, task_name, in_config)
+        _cerrar_modal_direccion(page)
 
         nombre_prd  = ""
         precio_con  = ""
@@ -317,7 +333,6 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
                 except Exception:
                     pass
                 page.wait_for_timeout(ESPERA_REINT)
-                _cerrar_modal_ciudad(page, task_name, in_config)
 
         _tomar_screenshot(page, ruta_screenshot)
 
@@ -533,12 +548,10 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
             locale="es-CO",
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True,
+            geolocation={"latitude": 4.7110, "longitude": -74.0721},
+            permissions=["geolocation"],
         )
         page = context.new_page()
-
-        # Seleccionar ciudad Bogotá una sola vez al inicio del contexto
-        url_base_lote = url_template.split("/buscar")[0] if "/buscar" in url_template else url_template
-        _seleccionar_ciudad(page, url_base_lote, task_name, in_config)
 
         try:
             for row in registros:
@@ -605,12 +618,10 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
         locale="es-CO",
         viewport={"width": 1920, "height": 1080},
         ignore_https_errors=True,
+        geolocation={"latitude": 4.7110, "longitude": -74.0721},
+        permissions=["geolocation"],
     )
     page = context.new_page()
-
-    # Seleccionar ciudad Bogotá una sola vez al inicio del contexto
-    url_base = url_template.split("/buscar")[0] if "/buscar" in url_template else url_template
-    _seleccionar_ciudad(page, url_base, task_name, in_config)
 
     try:
         for row in registros:
