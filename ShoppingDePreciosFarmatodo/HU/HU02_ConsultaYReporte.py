@@ -123,120 +123,80 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
         pass
 
 
+def _ciudad_visible(page: Page) -> bool:
+    """Retorna True si NO hay ciudad seleccionada en el widget de entrega de Farmatodo.
+
+    Comprueba el atributo title del elemento que muestra la ciudad actual en app-delivery-type.
+    Cuando ciudad seleccionada: title='Bogotá' (o nombre de otra ciudad).
+    Cuando no seleccionada: title='' o title contiene 'ciudad'.
+    """
+    try:
+        title = (page.evaluate(
+            "document.querySelector('app-delivery-type .cont-title [title]')?.getAttribute('title') || ''"
+        ) or "").strip()
+        return not title or "ciudad" in title.lower()
+    except Exception:
+        return False
+
+
+def _click_ciudad_bog(page: Page, task_name: str, in_config: dict) -> bool:
+    """Hace hover en el widget de entrega y hace click en Bogotá.
+
+    El widget de entrega de Farmatodo usa un dropdown con <li id="nav-bar-delivery-type-express-BOG">.
+    Hace hover para mostrar el dropdown, luego click con force=True para sortear el CSS del tooltip.
+    """
+    try:
+        page.hover("section.cont-delivery-navbar", timeout=3000)
+        page.wait_for_timeout(500)
+    except Exception:
+        try:
+            page.hover("app-delivery-type", timeout=2000)
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+    # Click en el <li> específico de Bogotá (ID fijo en el HTML de Farmatodo)
+    try:
+        bog = page.locator("#nav-bar-delivery-type-express-BOG")
+        if bog.count() > 0:
+            bog.click(force=True)
+            page.wait_for_timeout(1500)
+            write_log("Info", "HU02: Ciudad Bogotá seleccionada", task_name, in_config)
+            return True
+    except Exception:
+        pass
+
+    # Fallback: JS click para casos donde Playwright rechaza el force
+    ok = bool(page.evaluate(
+        "(() => { const el = document.getElementById('nav-bar-delivery-type-express-BOG'); "
+        "if (el) { el.click(); return true; } return false; })()"
+    ))
+    if ok:
+        page.wait_for_timeout(1500)
+        write_log("Info", "HU02: Ciudad Bogotá seleccionada (JS)", task_name, in_config)
+    else:
+        write_log("Warning", "HU02: No se encontró #nav-bar-delivery-type-express-BOG",
+                  task_name, in_config)
+    return ok
+
+
 def _seleccionar_ciudad(page: Page, url_base: str, task_name: str, in_config: dict) -> bool:
     """Navega a la homepage de Farmatodo y selecciona Bogotá como ciudad de entrega.
 
-    Debe llamarse UNA SOLA VEZ antes del loop de EANs. La cookie de ciudad persiste
-    en el contexto del navegador para todas las navegaciones siguientes.
+    Debe llamarse UNA SOLA VEZ antes del loop de EANs. La selección persiste en el
+    contexto del navegador para todas las navegaciones siguientes.
     """
     try:
         destino = url_base or "https://www.farmatodo.com.co"
         page.goto(destino, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # Verificar si aún muestra "Selecciona tu ciudad"
-        necesita = page.evaluate(r"""
-            (() => {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                let node;
-                while (node = walker.nextNode()) {
-                    const t = (node.textContent || '').trim().toLowerCase();
-                    if (t === 'selecciona tu ciudad') {
-                        const r = node.parentElement?.getBoundingClientRect();
-                        if (r && r.width > 0 && r.height > 0) return true;
-                    }
-                }
-                return false;
-            })()
-        """)
-
-        if not necesita:
+        if not _ciudad_visible(page):
             write_log("Info", "HU02: Ciudad ya configurada en Farmatodo", task_name, in_config)
             return True
 
-        write_log("Info", "HU02: Abriendo selector de ciudad en Farmatodo", task_name, in_config)
-
-        # Hacer clic en el elemento "Selecciona tu ciudad" para abrir el selector
-        page.evaluate(r"""
-            (() => {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                let node;
-                while (node = walker.nextNode()) {
-                    if ((node.textContent || '').trim().toLowerCase() === 'selecciona tu ciudad') {
-                        let el = node.parentElement;
-                        for (let i = 0; i < 6 && el; i++) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0) { el.click(); return; }
-                            el = el.parentElement;
-                        }
-                    }
-                }
-            })()
-        """)
-        page.wait_for_timeout(2000)
-
-        # Intentar ingresar "Bogotá" en un campo de búsqueda de ciudad
-        for sel_input in [
-            "input[placeholder*='ciudad' i]",
-            "input[placeholder*='Ciudad']",
-            "input[placeholder*='busca' i]",
-            "[class*='ciudad'] input",
-            "[class*='city'] input",
-            "input[type='search']",
-            "input[type='text']",
-        ]:
-            try:
-                inp = page.locator(sel_input).first
-                if inp.count() > 0 and inp.is_visible(timeout=1500):
-                    inp.fill("Bogotá")
-                    page.wait_for_timeout(1200)
-                    for sel_opt in [
-                        "[role='option']",
-                        "[class*='suggestion'] li",
-                        "[class*='autocomplete'] li",
-                        "[class*='option']",
-                        "ul li",
-                    ]:
-                        try:
-                            opt = page.locator(sel_opt).first
-                            if opt.is_visible(timeout=1200):
-                                opt.click()
-                                page.wait_for_timeout(1500)
-                                write_log("Info", "HU02: Ciudad Bogotá seleccionada", task_name, in_config)
-                                return True
-                        except Exception:
-                            continue
-                    page.keyboard.press("Enter")
-                    page.wait_for_timeout(1500)
-                    write_log("Info", "HU02: Ciudad Bogotá ingresada (Enter)", task_name, in_config)
-                    return True
-            except Exception:
-                continue
-
-        # Si no hay input, buscar "Bogotá" directamente en la página (lista predefinida)
-        bogota_click = page.evaluate(r"""
-            (() => {
-                for (const el of document.querySelectorAll('li, [role="option"], a, button')) {
-                    const t = (el.textContent || '').trim();
-                    if (/bogot/i.test(t) && t.length < 50) {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0) { el.click(); return t; }
-                    }
-                }
-                return null;
-            })()
-        """)
-        if bogota_click:
-            page.wait_for_timeout(1500)
-            write_log("Info", f"HU02: Ciudad '{bogota_click}' seleccionada directamente", task_name, in_config)
-            return True
-
-        # Screenshot de diagnóstico cuando no se logra seleccionar ciudad
-        ss_diag = str(_PROJECT_ROOT / "debug" / "farmatodo_ciudad_selector.png")
-        _tomar_screenshot(page, ss_diag)
-        write_log("Warning", f"HU02: No se pudo seleccionar ciudad. Screenshot: {ss_diag}",
-                  task_name, in_config)
-        return False
+        write_log("Info", "HU02: Seleccionando ciudad Bogotá en widget de entrega", task_name, in_config)
+        return _click_ciudad_bog(page, task_name, in_config)
 
     except Exception as e:
         write_log("Warning", f"HU02: Error al seleccionar ciudad: {e}", task_name, in_config)
@@ -244,92 +204,13 @@ def _seleccionar_ciudad(page: Page, url_base: str, task_name: str, in_config: di
 
 
 def _cerrar_modal_ciudad(page: Page, task_name: str, in_config: dict) -> None:
-    """Fallback por EAN: si 'Selecciona tu ciudad' reaparece, intenta seleccionar Bogotá.
-
-    Reutiliza la misma lógica de _seleccionar_ciudad pero sin navegar a la homepage.
-    """
+    """Fallback por EAN: si ciudad no seleccionada, selecciona Bogotá en el widget de entrega."""
     try:
-        necesita = page.evaluate(r"""
-            (() => {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                let node;
-                while (node = walker.nextNode()) {
-                    const t = (node.textContent || '').trim().toLowerCase();
-                    if (t === 'selecciona tu ciudad') {
-                        const r = node.parentElement?.getBoundingClientRect();
-                        if (r && r.width > 0 && r.height > 0) return true;
-                    }
-                }
-                return false;
-            })()
-        """)
-        if not necesita:
+        if not _ciudad_visible(page):
             return
-
-        write_log("Info", "HU02: Selector ciudad visible (fallback) — intentando seleccionar Bogotá",
+        write_log("Info", "HU02: Ciudad no seleccionada (fallback) — seleccionando Bogotá",
                   task_name, in_config)
-
-        # Clic en "Selecciona tu ciudad"
-        page.evaluate(r"""
-            (() => {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                let node;
-                while (node = walker.nextNode()) {
-                    if ((node.textContent || '').trim().toLowerCase() === 'selecciona tu ciudad') {
-                        let el = node.parentElement;
-                        for (let i = 0; i < 6 && el; i++) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0) { el.click(); return; }
-                            el = el.parentElement;
-                        }
-                    }
-                }
-            })()
-        """)
-        page.wait_for_timeout(1500)
-
-        # Intentar input
-        for sel_input in ["input[placeholder*='ciudad' i]", "input[type='search']", "input[type='text']"]:
-            try:
-                inp = page.locator(sel_input).first
-                if inp.count() > 0 and inp.is_visible(timeout=1000):
-                    inp.fill("Bogotá")
-                    page.wait_for_timeout(800)
-                    for sel_opt in ["[role='option']", "[class*='suggestion'] li", "ul li"]:
-                        try:
-                            opt = page.locator(sel_opt).first
-                            if opt.is_visible(timeout=1000):
-                                opt.click()
-                                page.wait_for_timeout(1200)
-                                write_log("Info", "HU02: Ciudad Bogotá seleccionada (fallback)",
-                                          task_name, in_config)
-                                return
-                        except Exception:
-                            continue
-                    page.keyboard.press("Enter")
-                    page.wait_for_timeout(1200)
-                    return
-            except Exception:
-                continue
-
-        # Bogotá directamente en lista
-        encontro = page.evaluate(r"""
-            (() => {
-                for (const el of document.querySelectorAll('li, [role="option"], button, a')) {
-                    const t = (el.textContent || '').trim();
-                    if (/bogot/i.test(t) && t.length < 50) {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0) { el.click(); return true; }
-                    }
-                }
-                return false;
-            })()
-        """)
-        if encontro:
-            page.wait_for_timeout(1200)
-            write_log("Info", "HU02: Bogotá seleccionada directamente (fallback)", task_name, in_config)
-        else:
-            write_log("Warning", "HU02: No se pudo seleccionar ciudad (fallback)", task_name, in_config)
+        _click_ciudad_bog(page, task_name, in_config)
     except Exception:
         pass
 
@@ -394,21 +275,27 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
         banner      = ""
 
         for intento in range(3):
-            # Nombre: intentar primero dentro de la tarjeta de producto (evita la barra de ciudad)
-            nombre_prd = _js_selector(page, "a.content-product .text-title")
-            if not nombre_prd:
-                nombre_prd = _js_selector(page, selectores.get("NombrePrd", ".text-title"))
-            precio_con  = _js_selector(page, selectores.get("PrecioConDescuento",  ".price__text-price"))
-            precio_sin  = _js_selector(page, selectores.get("PrecioSinDescuento",  ".price__text-offer-price"))
-            marca       = _js_selector(page, selectores.get("Marca",               ".text-brand"))
-            precio_unit = _js_selector(page, selectores.get("PrecioUnitario",      ".price__text-price-unit"))
-            reg_invima  = _js_selector(page, selectores.get("RegistroInvima",      ""))
-            banner      = _js_selector(page, selectores.get("Banner",              ".offer-description__text"))
+            # Selectores reales del HTML de Farmatodo (verificados 31/07/2026)
+            # Los selectores de BD sobreescriben los defaults cuando la tabla Selectores existe
+            nombre_prd  = _js_selector(page, selectores.get("NombrePrd",
+                                       ".product-card-handler__detail-description"))
+            precio_con  = _js_selector(page, selectores.get("PrecioConDescuento",
+                                       ".product-all-price__offer"))
+            precio_sin  = _js_selector(page, selectores.get("PrecioSinDescuento",
+                                       ".product-all-price__normal"))
+            marca       = _js_selector(page, selectores.get("Marca",
+                                       ".product-card-handler__brand-value"))
+            precio_unit = _js_selector(page, selectores.get("PrecioUnitario",
+                                       ".product-card-handler__pum"))
+            reg_invima  = _js_selector(page, selectores.get("RegistroInvima", ""))
+            banner      = _js_selector(page, selectores.get("Banner",
+                                       ".product-offer-description__text-value"))
 
-            # URL del producto: extraer href del primer card
+            # URL del producto: a.product-card-handler__image-link (selector real del HTML)
             try:
                 href = page.evaluate(
-                    "document.querySelector('a.content-product')?.getAttribute('href') || ''"
+                    "document.querySelector('a.product-card-handler__image-link')"
+                    "?.getAttribute('href') || ''"
                 ) or ""
                 if href.startswith("/"):
                     url_prod = url_base + href
@@ -419,18 +306,12 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
             except Exception:
                 url_prod = url_busqueda
 
-            # "Selecciona tu ciudad" es el título del modal, no un nombre de producto
-            modal_activo = "ciudad" in nombre_prd.lower() if nombre_prd else False
-            if (nombre_prd and not modal_activo) or precio_con:
+            if nombre_prd or precio_con:
                 break
             if intento < 2:
-                if modal_activo:
-                    write_log("Info",
-                              f"HU02: EAN ({ean}) — Modal ciudad aun visible (intento {intento+1}), reintentando cierre",
-                              task_name, in_config)
-                else:
-                    write_log("Info", f"HU02: EAN ({ean}) — Reintento {intento+1} sin datos, recargando pagina",
-                              task_name, in_config)
+                write_log("Info",
+                          f"HU02: EAN ({ean}) — Reintento {intento + 1} sin datos, recargando página",
+                          task_name, in_config)
                 try:
                     page.reload(wait_until="domcontentloaded", timeout=60000)
                 except Exception:
@@ -440,14 +321,8 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
 
         _tomar_screenshot(page, ruta_screenshot)
 
-        modal_activo = "ciudad" in nombre_prd.lower() if nombre_prd else False
-        if modal_activo or (not nombre_prd and not precio_con):
-            if modal_activo:
-                write_log("Info",
-                          f"HU02: EAN ({ean}) — Modal ciudad persistente tras 3 intentos, sin datos",
-                          task_name, in_config)
-            else:
-                write_log("Info", f"HU02: EAN ({ean}) — Sin informacion en Farmatodo", task_name, in_config)
+        if not nombre_prd and not precio_con:
+            write_log("Info", f"HU02: EAN ({ean}) — Sin información en Farmatodo", task_name, in_config)
             resultado["url_producto"] = url_prod
             return resultado
 
