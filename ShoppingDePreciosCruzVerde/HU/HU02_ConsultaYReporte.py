@@ -184,11 +184,43 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
                         }
                         const card = document.querySelector('ml-card-product');
                         if (!card) return null;
-                        const link = card.querySelector('a[href]');
-                        return {
-                            html: card.innerHTML,
-                            url:  link ? link.href : ''
-                        };
+
+                        // Cruz Verde usa Angular routerLink — buscar URL por múltiples métodos
+                        let url = '';
+
+                        // Método 1: <a href> o <a> con propiedad href resuelta
+                        const link = card.querySelector('a');
+                        if (link && link.href && !link.href.endsWith('#') &&
+                                link.href !== window.location.href) {
+                            url = link.href;
+                        }
+
+                        // Método 2: atributo routerlink en cualquier elemento del card
+                        if (!url) {
+                            const rl = card.querySelector('[routerlink], [ng-reflect-router-link]');
+                            if (rl) {
+                                const path = rl.getAttribute('routerlink') ||
+                                             rl.getAttribute('ng-reflect-router-link') || '';
+                                if (path) {
+                                    url = window.location.origin +
+                                          (path.startsWith('/') ? path : '/' + path);
+                                }
+                            }
+                        }
+
+                        // Método 3: patrón COCV_ en el innerHTML
+                        if (!url) {
+                            const m = card.innerHTML.match(
+                                /(?:href|routerlink|ng-reflect-router-link)="([^"]*COCV_[^"]*\.html[^"]*)"/i
+                            );
+                            if (m) {
+                                const path = m[1];
+                                url = path.startsWith('http') ? path :
+                                      window.location.origin + (path.startsWith('/') ? path : '/' + path);
+                            }
+                        }
+
+                        return { html: card.innerHTML, url: url };
                     })()
                 """)
             except Exception:
@@ -220,8 +252,10 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
         # Las URLs de Cruz Verde usan codigos internos COCV_XXXXXX, nunca el EAN.
         # Ejemplo: /producto-slug/COCV_162462.html
         if not url_producto or "cruzverde.com.co" not in url_producto:
+            card_html_snippet = (card_data.get("html", "") or "")[:600]
             write_log("Info",
-                      f"HU02: EAN ({ean}) — URL de resultado no valida: '{url_producto}'",
+                      f"HU02: EAN ({ean}) — URL de resultado no valida: '{url_producto}' "
+                      f"| innerHTML[:600]={card_html_snippet}",
                       task_name, in_config)
             resultado["url_producto"] = url_producto
             return resultado
