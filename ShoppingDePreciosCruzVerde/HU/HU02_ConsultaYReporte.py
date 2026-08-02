@@ -175,6 +175,13 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
             try:
                 card_data = page.evaluate("""
                     (() => {
+                        // Si Cruz Verde muestra "no encontramos resultados", las tarjetas
+                        // visibles son del carrusel "Quizás te puede interesar" — ignorarlas.
+                        const bodyText = document.body.innerText.toLowerCase();
+                        if (bodyText.includes('no encontramos resultados') ||
+                            bodyText.includes('no se encontraron resultados')) {
+                            return null;
+                        }
                         const card = document.querySelector('ml-card-product');
                         if (!card) return null;
                         const link = card.querySelector('a[href]');
