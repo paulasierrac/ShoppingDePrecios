@@ -231,7 +231,11 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
                   task_name, in_config)
         try:
             page.goto(url_producto, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(ESPERA_CARGA)
+            # Espera a que Angular renderice el contenido del producto
+            try:
+                page.wait_for_selector("div.text-main h1, h1", timeout=ESPERA_CARGA)
+            except Exception:
+                page.wait_for_timeout(ESPERA_CARGA)
             _descartar_modal(page)
         except PlaywrightTimeout:
             write_log("Warning", f"HU02: Timeout cargando detalle EAN ({ean})", task_name, in_config)
@@ -284,6 +288,11 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
         precio_sin = datos.get("precioSin", "").strip()
         pum        = datos.get("pum",       "").strip()
         sin_stock  = datos.get("sinStock",  False)
+
+        write_log("Info",
+                  f"HU02: EAN ({ean}) — Detalle extraído: nombre='{nombre_prd}' "
+                  f"precioCon='{precio_con}' precioSin='{precio_sin}'",
+                  task_name, in_config)
 
         if not nombre_prd and not precio_con:
             write_log("Info", f"HU02: EAN ({ean}) — No se pudo extraer datos del detalle",
