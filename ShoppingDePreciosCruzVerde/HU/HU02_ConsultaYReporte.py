@@ -169,64 +169,24 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
         _descartar_modal(page)
         page.wait_for_timeout(1000)
 
-        # ── Extraer primera tarjeta de resultado ──────────────────────────
-        card_data = None
+        # ── Verificar si hay resultados ────────────────────────────────────
+        has_results = False
         for intento in range(3):
             try:
-                card_data = page.evaluate("""
+                has_results = page.evaluate("""
                     (() => {
-                        // Si Cruz Verde muestra "no encontramos resultados", las tarjetas
-                        // visibles son del carrusel "Quizás te puede interesar" — ignorarlas.
                         const bodyText = document.body.innerText.toLowerCase();
                         if (bodyText.includes('no encontramos resultados') ||
                             bodyText.includes('no se encontraron resultados')) {
-                            return null;
+                            return false;
                         }
-                        const card = document.querySelector('ml-card-product');
-                        if (!card) return null;
-
-                        // Cruz Verde usa Angular routerLink — buscar URL por múltiples métodos
-                        let url = '';
-
-                        // Método 1: <a href> o <a> con propiedad href resuelta
-                        const link = card.querySelector('a');
-                        if (link && link.href && !link.href.endsWith('#') &&
-                                link.href !== window.location.href) {
-                            url = link.href;
-                        }
-
-                        // Método 2: atributo routerlink en cualquier elemento del card
-                        if (!url) {
-                            const rl = card.querySelector('[routerlink], [ng-reflect-router-link]');
-                            if (rl) {
-                                const path = rl.getAttribute('routerlink') ||
-                                             rl.getAttribute('ng-reflect-router-link') || '';
-                                if (path) {
-                                    url = window.location.origin +
-                                          (path.startsWith('/') ? path : '/' + path);
-                                }
-                            }
-                        }
-
-                        // Método 3: patrón COCV_ en el innerHTML
-                        if (!url) {
-                            const m = card.innerHTML.match(
-                                /(?:href|routerlink|ng-reflect-router-link)="([^"]*COCV_[^"]*\.html[^"]*)"/i
-                            );
-                            if (m) {
-                                const path = m[1];
-                                url = path.startsWith('http') ? path :
-                                      window.location.origin + (path.startsWith('/') ? path : '/' + path);
-                            }
-                        }
-
-                        return { html: card.innerHTML, url: url };
+                        return !!document.querySelector('ml-card-product');
                     })()
                 """)
             except Exception:
-                card_data = None
+                has_results = False
 
-            if card_data and card_data.get("html"):
+            if has_results:
                 break
             if intento < 2:
                 write_log("Info",
@@ -241,41 +201,44 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
 
         _tomar_screenshot(page, ruta_screenshot)
 
-        if not card_data or not card_data.get("html"):
+        if not has_results:
             write_log("Info", f"HU02: EAN ({ean}) — Sin tarjeta de resultado en Cruz Verde",
                       task_name, in_config)
             return resultado
 
-        url_producto = card_data.get("url", "").strip()
-
-        # ── Validar que la URL sea del dominio Cruz Verde ─────────────────
-        # Las URLs de Cruz Verde usan codigos internos COCV_XXXXXX, nunca el EAN.
-        # Ejemplo: /producto-slug/COCV_162462.html
-        if not url_producto or "cruzverde.com.co" not in url_producto:
-            card_html_snippet = (card_data.get("html", "") or "")[:600]
-            write_log("Info",
-                      f"HU02: EAN ({ean}) — URL de resultado no valida: '{url_producto}' "
-                      f"| innerHTML[:600]={card_html_snippet}",
-                      task_name, in_config)
-            resultado["url_producto"] = url_producto
-            return resultado
-
-        # ── Navegar a la pagina de detalle del producto ───────────────────
-        write_log("Info", f"HU02: EAN ({ean}) — Navegando a detalle: {url_producto}",
-                  task_name, in_config)
+        # ── Hacer click en la primera tarjeta para navegar al detalle ─────
+        # Cruz Verde usa Angular Router sin href estándar; el click es la única
+        # forma fiable de seguir el enlace del ml-card-product.
+        url_producto = ""
         try:
-            page.goto(url_producto, wait_until="domcontentloaded", timeout=60000)
-            # Espera a que Angular renderice el contenido del producto
-            try:
-                page.wait_for_selector("div.text-main h1, h1", timeout=ESPERA_CARGA)
-            except Exception:
-                page.wait_for_timeout(ESPERA_CARGA)
-            _descartar_modal(page)
-        except PlaywrightTimeout:
-            write_log("Warning", f"HU02: Timeout cargando detalle EAN ({ean})", task_name, in_config)
-            resultado["estado"]        = "99"
-            resultado["observaciones"] = "Timeout al cargar la pagina de detalle"
+            card_locator = page.locator('ml-card-product').first
+            bbox = card_locator.bounding_box(timeout=5000)
+            if bbox:
+                # Clic en el tercio superior del card para evitar el botón "Agregar" (parte baja)
+                click_x = bbox['x'] + bbox['width'] / 2
+                click_y = bbox['y'] + bbox['height'] * 0.3
+                page.mouse.click(click_x, click_y)
+                page.wait_for_url(lambda url: url != url_busqueda, timeout=20000)
+                url_producto = page.url
+        except Exception as e:
+            write_log("Warning", f"HU02: EAN ({ean}) — Click en tarjeta falló: {e}",
+                      task_name, in_config)
+
+        if not url_producto or "cruzverde.com.co" not in url_producto or url_producto == url_busqueda:
+            write_log("Info",
+                      f"HU02: EAN ({ean}) — URL tras click no valida: '{url_producto}'",
+                      task_name, in_config)
             return resultado
+
+        write_log("Info", f"HU02: EAN ({ean}) — Navegado a detalle: {url_producto}",
+                  task_name, in_config)
+
+        # El click ya navegó a la página de detalle; esperar renderizado Angular
+        try:
+            page.wait_for_selector("div.text-main h1, h1", timeout=ESPERA_CARGA)
+        except Exception:
+            page.wait_for_timeout(ESPERA_CARGA)
+        _descartar_modal(page)
 
         # ── Extraer campos desde la pagina de detalle ─────────────────────
         # Selectores basados en la estructura Angular real de cruzverde.com.co:
