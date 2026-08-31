@@ -614,9 +614,11 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.CruzVerde)",
                   task_name, in_config)
 
-        ruta_debug = _PROJECT_ROOT / "debug"
-        ruta_debug.mkdir(exist_ok=True)
-        sello      = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _now       = datetime.now()
+        ruta_debug = (_PROJECT_ROOT / "debug"
+                      / str(_now.year) / f"{_now.month:02d}" / f"{_now.day:02d}")
+        ruta_debug.mkdir(parents=True, exist_ok=True)
+        sello      = _now.strftime("%Y%m%d_%H%M%S")
         ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCruzVerde_{sello}.xlsx")
         pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)

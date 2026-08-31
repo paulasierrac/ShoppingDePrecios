@@ -821,7 +821,9 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
 
     _es_debug = debug or bool(in_config.get("_debug"))
     if _es_debug:
-        ruta_reporte = str(_PROJECT_ROOT / "debug")
+        _now = datetime.now()
+        ruta_reporte = str(_PROJECT_ROOT / "debug"
+                           / str(_now.year) / f"{_now.month:02d}" / f"{_now.day:02d}")
         ruta_excel   = os.path.join(ruta_reporte, f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx")
     else:
         ruta_reporte = in_config.get("RutaReporte") or ""

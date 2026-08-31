@@ -913,7 +913,9 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     nombre_hoja      = in_config["NombreHojaResultado"]
 
     if in_config.get("_debug"):
-        ruta_reporte = str(_PROJECT_ROOT / "debug")
+        _now = datetime.now()
+        ruta_reporte = str(_PROJECT_ROOT / "debug"
+                           / str(_now.year) / f"{_now.month:02d}" / f"{_now.day:02d}")
         nombre_excel = f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx"
     else:
         ruta_reporte = in_config.get("RutaReporte") or ""
