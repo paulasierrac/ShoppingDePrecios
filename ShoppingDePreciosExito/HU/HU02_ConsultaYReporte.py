@@ -152,10 +152,15 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
                          in_config: dict, task_name: str) -> dict:
     """
     Navega a la URL de busqueda de Exito para el EAN, extrae los datos del
-    primer resultado usando JavaScript sobre el DOM, y retorna un dict con:
+    primer resultado usando querySelector con coincidencia parcial de clase
+    (robusto ante cambios de hash CSS de Next.js), y retorna un dict con:
       nombre_prd, marca, precio_fidelizacion, precio_con_desc,
       precio_sin_desc, porc_descuento, precio_unitario,
       url_producto, banner, estado, observaciones
+
+    Estados:
+      2  -> Informacion encontrada
+      99 -> Falla al extraer o informacion no encontrada
     """
     resultado = {
         "nombre_prd":         "",
@@ -177,20 +182,72 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
         page.goto(url_consulta, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(ESPERA_5S)
 
-        # ── Paso 1: Obtener HTML de todas las tarjetas de producto (3 intentos) ──
-        html_cards = ""
+        # ── Extrae la primera tarjeta via JS con selectores parciales ─────────
+        # Los hashes CSS de Next.js (ej. __M0677) cambian con cada deploy de Exito,
+        # por eso se usa [class*="..."] que solo requiere que la parte estable coincida.
+        datos = None
         for intento in range(3):
             try:
-                html_cards = page.evaluate(
-                    "Array.from(document.getElementsByClassName("
-                    "'productCard_productCard__M0677 productCard_column__Lp3OF'))"
-                    ".map(el => el.innerHTML).join(' ');"
-                ) or ""
-                if html_cards:
+                datos = page.evaluate("""
+                    (() => {
+                        const q  = (el, sel) => el.querySelector(sel);
+                        const t  = el => el ? el.textContent.trim() : '';
+                        const qs = sel => document.querySelector(sel);
+
+                        // Buscar primera tarjeta de producto
+                        const card = qs('[class*="productCard_productCard"]') ||
+                                     qs('[class*="ProductCard"]') ||
+                                     qs('[class*="product-card"]');
+                        if (!card) return null;
+
+                        const nombre = t(
+                            q(card, '[class*="styles_name"]')   ||
+                            q(card, '[class*="product-name"]')  ||
+                            q(card, 'h3') || q(card, 'h2')
+                        );
+                        const marca = t(
+                            q(card, '[class*="styles_brand"]') ||
+                            q(card, '[class*="brand"]')
+                        );
+
+                        // Precio fidelizacion (Club Exito)
+                        const precioFid = t(
+                            q(card, '[class*="fs-price"]') ||
+                            q(card, '[class*="fidelizacion"]')
+                        );
+
+                        // Precio con descuento (precio actual, no tachado)
+                        const precioCon = t(
+                            q(card, '[class*="ProductPrice_container__price"]') ||
+                            q(card, '[class*="container__price"]')              ||
+                            q(card, '[class*="regular-price"]')
+                        );
+
+                        // Precio sin descuento (precio original tachado)
+                        const precioSin = t(
+                            q(card, '[class*="promotion_price-dashed"]') ||
+                            q(card, '[class*="price-dashed"]')           ||
+                            q(card, '[class*="original-price"]')
+                        );
+
+                        const porcDesc   = t(q(card, '[data-percentage="true"]'));
+                        const precioUnit = t(
+                            q(card, '[class*="price-unit__text"]') ||
+                            q(card, '[class*="unit_price"]')
+                        );
+
+                        // URL del producto
+                        const link = card.closest('a') || q(card, 'a[href]');
+                        const url  = link ? link.href : '';
+
+                        return { nombre, marca, precioFid, precioCon, precioSin,
+                                 porcDesc, precioUnit, url };
+                    })()
+                """)
+                if datos is not None:
                     break
             except Exception as e:
-                err_str = str(e)
-                if "Unable to run the JavaScript" in err_str:
+                if "Unable to run the JavaScript" in str(e):
                     break
                 try:
                     page.reload(wait_until="domcontentloaded", timeout=30000)
@@ -198,102 +255,57 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
                     pass
                 page.wait_for_timeout(ESPERA_5S)
 
-        if not html_cards:
-            write_log(
-                "Info",
-                f"HU02: EAN ({ean}) — No existe el producto en la farmacia",
-                task_name, in_config
-            )
+        if datos is None:
+            write_log("Info", f"HU02: EAN ({ean}) — No existe el producto en la farmacia",
+                      task_name, in_config)
             _tomar_screenshot(page, ruta_screenshot)
             return resultado
 
-        # ── Paso 2: Separar en bloques individuales de producto ──────────────
-        bloque = ""
-        for delimitador in [
-            "productCard_contentInfo__CBBA7 productCard_column__Lp3OF",
-            '<div _ngcontent-ng-ftd-c94=""',
-            'app-new-product-card _ngcontent-ng-ftd-c97=""',
-        ]:
-            if delimitador in html_cards:
-                partes = html_cards.split(delimitador)
-                if len(partes) > 1:
-                    bloque = partes[1]
-                break
-
-        if not bloque:
-            bloque = html_cards
-
-        # ── Paso 3: Extraer URL del primer producto ───────────────────────────
-        url_path = _entre(html_cards, 'a href="/', '"')
-        url_base_site = url_template.split("/s?q=")[0]
-        url_producto = f"{url_base_site}/{url_path}" if url_path else url_consulta
+        nombre_prd  = datos.get("nombre", "")
+        marca       = datos.get("marca", "")
+        url_producto = datos.get("url", "") or url_consulta
         resultado["url_producto"] = url_producto
 
-        # ── Paso 4: Extraer campos del primer bloque ──────────────────────────
-        nombre_prd = _entre(bloque, 'class="styles_name__qQJiK">', "<")
-        marca      = _entre(bloque, 'class="styles_brand__IdJcB">', "<")
-
-        precio_fid_raw  = _entre(bloque, 'class="price_fs-price__4GZ9F ">', "<")
-        precio_con_raw  = _entre(
-            bloque,
-            'class="ProductPrice_container__price__XmMWA ProductPrice_text14___ZxlL">',
-            "<",
-        )
-        precio_sin_raw  = _entre(
-            bloque,
-            'class="priceSection_container-promotion_price-dashed__FJ7nI">',
-            "<",
-        )
-        porc_desc_raw   = _entre(bloque, '<span data-percentage="true">', "<")
-        precio_unit_raw = _entre(
-            bloque,
-            '<span class="product-unit_price-unit__text__qeheS">',
-            "<",
-        )
-
         if not nombre_prd:
-            write_log(
-                "Info",
-                f"HU02: EAN ({ean}) — No existe el producto en la farmacia",
-                task_name, in_config
-            )
+            write_log("Info",
+                      f"HU02: EAN ({ean}) — Tarjeta encontrada pero sin nombre extraible",
+                      task_name, in_config)
             _tomar_screenshot(page, ruta_screenshot)
+            resultado["observaciones"] = "Tarjeta encontrada pero sin nombre extraible"
             return resultado
 
-        # ── Paso 5: Validar que el nombre corresponda a la palabra clave ──────
+        # ── Validar que el nombre corresponda a la palabra clave ──────────────
         nombre_upper = nombre_prd.upper()
         kw_upper     = (palabra_clave or "").upper().strip()
 
         if kw_upper and kw_upper not in nombre_upper:
-            write_log(
-                "Info",
-                f"HU02: EAN ({ean}) — Sin coincidencia: nombre='{nombre_prd}', "
-                f"palabra_clave='{palabra_clave}'",
-                task_name, in_config
-            )
+            write_log("Info",
+                      f"HU02: EAN ({ean}) — Sin coincidencia: nombre='{nombre_prd}', "
+                      f"palabra_clave='{palabra_clave}'",
+                      task_name, in_config)
             _tomar_screenshot(page, ruta_screenshot)
             resultado.update({
                 "nombre_prd":    nombre_prd,
                 "marca":         marca,
                 "url_producto":  url_producto,
-                "estado":        "3",
+                "estado":        "99",
                 "observaciones": (
-                    "No existe coincidencia entre la informacion encontrada "
-                    "y el producto consultado"
+                    f"Sin coincidencia: nombre='{nombre_prd}', "
+                    f"palabra_clave='{palabra_clave}'"
                 ),
             })
             return resultado
 
-        write_log(
-            "Info",
-            f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
-            task_name, in_config
-        )
+        write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
+                  task_name, in_config)
         _tomar_screenshot(page, ruta_screenshot)
+
+        precio_con_raw = datos.get("precioCon", "")
+        precio_sin_raw = datos.get("precioSin", "")
 
         precio_con = _limpiar_precio(precio_con_raw)
         precio_sin = _limpiar_precio(precio_sin_raw)
-        porc_desc  = porc_desc_raw.replace("%", "").strip()
+        porc_desc  = (datos.get("porcDesc", "") or "").replace("%", "").strip()
 
         # Si solo hay un precio (sin tachado) -> precio regular sin descuento
         if precio_con and not precio_sin:
@@ -304,11 +316,11 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
         resultado.update({
             "nombre_prd":          nombre_prd,
             "marca":               marca,
-            "precio_fidelizacion": _limpiar_precio(precio_fid_raw),
+            "precio_fidelizacion": _limpiar_precio(datos.get("precioFid", "")),
             "precio_con_desc":     precio_con,
             "precio_sin_desc":     precio_sin,
             "porc_descuento":      porc_desc,
-            "precio_unitario":     precio_unit_raw,
+            "precio_unitario":     datos.get("precioUnit", ""),
             "url_producto":        url_producto,
             "banner":              "",
             "estado":              "2",
@@ -370,49 +382,58 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         cnt_insumo = cursor.fetchone()[0]
         write_log("Info", f"HU02: TicketInsumo tiene {cnt_insumo} registros con Estado=1", task_name, in_config)
 
-        # Limpiar registros obsoletos (lote anterior) y ya reportados (mismo lote
-        # re-ejecutado): permite repetir HU02 sobre el mismo TicketInsumo.
         cursor.execute(f"""
-            DELETE b FROM {esquema}.{tabla_ex} b
+            SELECT COUNT(*) FROM {esquema}.{tabla_ex} b
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
-            WHERE b.FechaInicio < a.FechaInicio
-               OR b.Estado IN ('100', '199', '3')
+            WHERE b.Estado IN ('1','2','99')
         """)
-        filas_eliminadas = cursor.rowcount
-        if filas_eliminadas:
-            write_log("Info", f"HU02: DELETE elimino {filas_eliminadas} registros obsoletos/reportados de {tabla_ex}", task_name, in_config)
+        en_progreso = cursor.fetchone()[0] > 0
 
-        cursor.execute(f"""
-            SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
-            LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
-            WHERE b.Id IS NULL AND a.Estado='1'
-        """)
-        cnt_nuevos = cursor.fetchone()[0]
-        write_log("Info", f"HU02: Hay {cnt_nuevos} registros nuevos para insertar en {tabla_ex}", task_name, in_config)
-
-        if cnt_nuevos > 0:
-            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
+        if en_progreso:
+            write_log("Info", "HU02: Retomando ejecucion anterior en progreso", task_name, in_config)
+        else:
+            # Limpiar registros obsoletos (lote anterior) y ya reportados.
             cursor.execute(f"""
-                INSERT INTO {esquema}.{tabla_ex}
-                    ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
-                     [Estado],[Maquina],[PLU],[EAN],[Descripcion],
-                     [MarcaProducto],[NombrePrd],[RegistroInvima],
-                     [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
-                     [Porc.Descuento],[PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen])
-                SELECT
-                    a.[Id], a.[FechaInicio], GETDATE(), NULL,
-                    '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
-                    '','','','','','','','','','',''
-                FROM {esquema}.{tabla_ins} a
+                DELETE b FROM {esquema}.{tabla_ex} b
+                JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+                WHERE b.FechaInicio < a.FechaInicio
+                   OR b.Estado IN ('100')
+            """)
+            filas_eliminadas = cursor.rowcount
+            if filas_eliminadas:
+                write_log("Info", f"HU02: DELETE elimino {filas_eliminadas} registros obsoletos/reportados de {tabla_ex}", task_name, in_config)
+
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
                 LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                 WHERE b.Id IS NULL AND a.Estado='1'
             """)
-            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
-            write_log("Info",
-                      f"HU02: INSERT ejecutado — {cnt_nuevos} registros cargados en {tabla_ex}",
-                      task_name, in_config)
-        else:
-            write_log("Info", f"HU02: Sin registros nuevos para insertar en {tabla_ex}", task_name, in_config)
+            cnt_nuevos = cursor.fetchone()[0]
+            write_log("Info", f"HU02: Hay {cnt_nuevos} registros nuevos para insertar en {tabla_ex}", task_name, in_config)
+
+            if cnt_nuevos > 0:
+                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
+                cursor.execute(f"""
+                    INSERT INTO {esquema}.{tabla_ex}
+                        ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
+                         [Estado],[Observaciones],[Maquina],[PLU],[EAN],[Descripcion],
+                         [MarcaProducto],[NombrePrd],[RegistroInvima],
+                         [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
+                         [Porc.Descuento],[PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen])
+                    SELECT
+                        a.[Id], a.[FechaInicio], GETDATE(), NULL,
+                        '1', '', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
+                        '','','','','','','','','','',''
+                    FROM {esquema}.{tabla_ins} a
+                    LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
+                    WHERE b.Id IS NULL AND a.Estado='1'
+                """)
+                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
+                write_log("Info",
+                          f"HU02: INSERT ejecutado — {cnt_nuevos} registros cargados en {tabla_ex}",
+                          task_name, in_config)
+            else:
+                write_log("Info", f"HU02: Sin registros nuevos para insertar en {tabla_ex}", task_name, in_config)
 
         # PASO 2: Verificar si hay registros pendientes
         cursor.execute(f"""
@@ -627,6 +648,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                 estado      = res["estado"]
                 nombre_prd  = res["nombre_prd"].replace(";", "").replace("'", "''")
                 marca       = res["marca"].replace("'", "''")
+                obs         = res["observaciones"].replace("'", "''")
                 precio_fid  = res["precio_fidelizacion"]
                 precio_con  = res["precio_con_desc"]
                 precio_sin  = res["precio_sin_desc"]
@@ -640,15 +662,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                         UPDATE {esquema}.{tabla_ex}
                         SET [FechaFin]=GETDATE(),
                             [Estado]='99',
-                            [UrlProducto]='{url_prd}',
-                            [RutaImagen]='{ruta_img}'
-                        WHERE Id='{id_ticket}'
-                    """)
-                elif estado == "3":
-                    cursor.execute(f"""
-                        UPDATE {esquema}.{tabla_ex}
-                        SET [FechaFin]=GETDATE(),
-                            [Estado]='3',
+                            [Observaciones]='{obs}',
                             [NombrePrd]='{nombre_prd}',
                             [MarcaProducto]='{marca}',
                             [UrlProducto]='{url_prd}',
@@ -660,6 +674,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                         UPDATE {esquema}.{tabla_ex}
                         SET [FechaFin]=GETDATE(),
                             [Estado]='2',
+                            [Observaciones]='',
                             [NombrePrd]='{nombre_prd}',
                             [MarcaProducto]='{marca}',
                             [PrecioFidelizacion]='{precio_fid}',
@@ -731,17 +746,13 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
         f"UPDATE {esquema}.{tabla_ex} SET [Estado]='2' "
         f"WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'"
     )
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_ex} SET [Estado]='99' "
-        f"WHERE [Estado]='199' AND FechaInicio='{fecha_inicio}'"
-    )
 
     # Estadisticas
     cursor.execute(f"""
         SELECT
             COUNT(*)                                                             AS TotalRegistros,
             SUM(CASE WHEN Estado IN ('2','100') THEN 1 ELSE 0 END)              AS CantidadExtraidos,
-            SUM(CASE WHEN Estado IN ('99','199') THEN 1 ELSE 0 END)             AS CantidadEstado99
+            SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END)                        AS CantidadEstado99
         FROM {esquema}.{tabla_ex}
         WHERE FechaInicio='{fecha_inicio}'
     """)
@@ -757,14 +768,10 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
         task_name, in_config
     )
 
-    # Marcar como reportados
+    # Marcar encontrados como reportados
     cursor.execute(
         f"UPDATE {esquema}.{tabla_ex} SET [Estado]='100' "
         f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
-    )
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_ex} SET [Estado]='199' "
-        f"WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'"
     )
 
     # Calcular porcentaje de descuento
@@ -787,34 +794,39 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
     # Consultar datos para el reporte
     cursor.execute(f"""
         SELECT
-            [FechaInicio]        AS fechainsumo,
-            [PLU]                AS plu,
-            [Descripcion]        AS descripcion,
-            [FechaModificacion]  AS horaconsulta,
-            [EAN]                AS ean,
-            [Estado]             AS estado,
-            [MarcaProducto]      AS marcaproducto,
-            [NombrePrd]          AS nombreprd,
-            [RegistroInvima]     AS registroinvima,
-            [PrecioUnitario]     AS preciounitario,
-            [PrecioConDescuento] AS preciocondescuento,
-            [PrecioSinDescuento] AS preciosindescuento,
-            [Porc.Descuento]     AS [porc.descuento],
-            [PrecioFidelizacion] AS preciofidelizacion,
-            [BannerProducto]     AS bannerproducto,
-            [UrlProducto]        AS urlproducto,
-            [RutaImagen]         AS rutaimagen
+            [FechaInicio],
+            [PLU],
+            [Descripcion],
+            [FechaModificacion],
+            [EAN],
+            [Estado],
+            [MarcaProducto],
+            [NombrePrd],
+            [RegistroInvima],
+            [PrecioUnitario],
+            [PrecioConDescuento],
+            [PrecioSinDescuento],
+            [Porc.Descuento],
+            [PrecioFidelizacion],
+            [BannerProducto],
+            [UrlProducto],
+            [RutaImagen],
+            [Observaciones]
         FROM {esquema}.{tabla_ex}
         WHERE FechaInicio='{fecha_inicio}'
     """)
-    cols  = [col[0] for col in cursor.description]
     filas = cursor.fetchall()
     conn.close()
 
     if not filas:
         return
 
-    df = pd.DataFrame([list(row) for row in filas], columns=cols)
+    df = pd.DataFrame([list(row) for row in filas], columns=[
+        "FechaInsumo", "PLU", "Descripción", "HoraConsulta", "EAN", "Estado",
+        "MarcaProducto", "NombreProducto", "RegistroInvima", "PrecioUnitario",
+        "PrecioConDescuento", "PrecioSinDescuento", "PorcentajeDescuento",
+        "PrecioFidelización", "BannerProducto", "URLProducto", "RutaImagen", "Observación",
+    ])
 
     nombre_resultado = in_config["NombreResultado"]
     nombre_hoja      = in_config["NombreHojaResultado"]
@@ -839,6 +851,12 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
         f"HU02: Reporte generado en ({ruta_excel})",
         task_name, in_config
     )
+
+    conn = conectar_bd(in_config)
+    cursor = conn.cursor()
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    conn.commit()
+    conn.close()
 
     from_address = in_config.get("_correo", {}).get("usuario", "")
     reemplazo    = {"$NombrePagina$": in_config["DrogueriaExito"]}

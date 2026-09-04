@@ -216,26 +216,27 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         titulo = ""
         url_producto = ""
         for _ in range(5):
-            # Página de detalle (redirect de EAN único)
             titulo = _js(
                 page,
-                "document.querySelector("
-                "'h1.locatelcolombia-components-5-x-name-products')"
-                "?.innerText.trim()"
+                "(()=>{"
+                "  const qs=(s)=>document.querySelector(s);"
+                "  const t=(el)=>el?.innerText?.trim()||'';"
+                "  return t(qs('h1[class*=\"name-products\"]'))"
+                "      || t(qs('[class*=\"productName\"]'))"
+                "      || t(qs('[class*=\"productBrand\"]'))"
+                "      || t(qs('[class*=\"nameContainer\"] h1'))"
+                "      || '';"
+                "})()"
             )
-            if not titulo:
-                # Página de resultados de búsqueda (cards)
-                titulo = _js(
-                    page,
-                    "document.querySelector("
-                    "'.vtex-product-summary-2-x-productBrand')"
-                    "?.innerText.trim()"
-                )
             if not url_producto:
                 url_producto = _js(
                     page,
-                    "document.querySelector("
-                    "'.vtex-product-summary-2-x-clearLink--itemList')?.href"
+                    "(()=>{"
+                    "  const a=document.querySelector('[class*=\"clearLink\"]')"
+                    "         || document.querySelector('[class*=\"productSummaryName\"] a')"
+                    "         || document.querySelector('a[class*=\"itemList\"]');"
+                    "  return a?.href || '';"
+                "})()"
                 ) or page.url
             if titulo:
                 break
@@ -262,21 +263,27 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         precio_con_desc_raw = _js(
             page,
             "(()=>{"
-            "  const c=document.querySelector("
-            "    '.vtex-product-price-1-x-sellingPriceValue--summary');"
-            "  return c ? [...c.querySelectorAll("
-            "    '.vtex-product-price-1-x-currencyInteger--summary')]"
-            "    .map(e=>e.innerText.trim()).join('') : '';"
+            "  const c=document.querySelector('[class*=\"sellingPriceValue\"]');"
+            "  if(c){"
+            "    const parts=[...c.querySelectorAll('[class*=\"currencyInteger\"]')]"
+            "      .map(e=>e.innerText.trim()).join('');"
+            "    if(parts) return parts;"
+            "  }"
+            "  const sel=document.querySelector('[class*=\"sellingPrice\"]');"
+            "  return sel?.innerText?.replace(/[^\\d]/g,'')||'';"
             "})()"
         )
         precio_sin_desc_raw = _js(
             page,
             "(()=>{"
-            "  const c=document.querySelector("
-            "    '.vtex-product-price-1-x-listPriceValue--summary');"
-            "  return c ? [...c.querySelectorAll("
-            "    '.vtex-product-price-1-x-currencyInteger--summary')]"
-            "    .map(e=>e.innerText.trim()).join('') : '';"
+            "  const c=document.querySelector('[class*=\"listPriceValue\"]');"
+            "  if(c){"
+            "    const parts=[...c.querySelectorAll('[class*=\"currencyInteger\"]')]"
+            "      .map(e=>e.innerText.trim()).join('');"
+            "    if(parts) return parts;"
+            "  }"
+            "  const lst=document.querySelector('[class*=\"listPrice\"]');"
+            "  return lst?.innerText?.replace(/[^\\d]/g,'')||'';"
             "})()"
         )
 
@@ -308,11 +315,10 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         marca_raw = _js(
             page,
             "(()=>{"
-            "  const sels=['vtex-store-components-3-x-productBrandLink',"
-            "               'vtex-store-components-3-x-productBrand a',"
-            "               'vtex-product-summary-2-x-brandName'];"
-            "  for(const c of sels){"
-            "    const el=document.querySelector('.'+c);"
+            "  const sels=['[class*=\"productBrandLink\"]','[class*=\"productBrand\"] a',"
+            "              '[class*=\"brandName\"]','[class*=\"brand\"]'];"
+            "  for(const s of sels){"
+            "    const el=document.querySelector(s);"
             "    if(el && el.tagName!=='H1') return el.innerText.trim();"
             "  }"
             "  return '';"
@@ -332,7 +338,7 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
                 task_name, in_config
             )
             _tomar_screenshot(page, ruta_screenshot)
-            resultado["estado"]        = "3"
+            resultado["estado"]        = "99"
             resultado["observaciones"] = (
                 "No existe coincidencia entre la informacion encontrada "
                 "y el producto consultado"
@@ -433,48 +439,54 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 2: Insertar en TablaLocatel los IDs nuevos de TicketInsumo
         # ----------------------------------------------------------------
-        # TRUNCATE en TicketInsumo resetea el IDENTITY a 1, por lo que los
-        # nuevos IDs colisionan con los de corridas anteriores en Locatel.
-        # Eliminamos los registros viejos cuyos IDs coinciden con el lote
-        # actual pero tienen una fecha anterior (ya reportados).
         cursor.execute(f"""
-            DELETE b FROM {esquema}.{tabla_loc} b
+            SELECT COUNT(*) FROM {esquema}.{tabla_loc} b
             JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
-            WHERE b.FechaInicio < a.FechaInicio
-               OR b.Estado IN ('100', '199', '3')
+            WHERE b.Estado IN ('1','2','99')
         """)
-        write_log("Info", f"HU02: Registros anteriores eliminados de {tabla_loc}: {cursor.rowcount}", task_name, in_config)
+        en_progreso = cursor.fetchone()[0] > 0
 
-        cursor.execute(f"""
-            SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
-            LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
-            WHERE b.Id IS NULL AND a.Estado='1'
-        """)
-        cnt_nuevos = cursor.fetchone()[0]
-        write_log("Info", f"HU02: Nuevos registros para insertar en {tabla_loc}: {cnt_nuevos}", task_name, in_config)
-
-        if cnt_nuevos > 0:
-            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} ON")
+        if en_progreso:
+            write_log("Info", "HU02: Retomando ejecucion anterior en progreso", task_name, in_config)
+        else:
             cursor.execute(f"""
-                INSERT INTO {esquema}.{tabla_loc}
-                    ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
-                     [Estado],[Observaciones],[Reintentos],[Maquina],[FechaInsumo],
-                     [PLU],[EAN],[Descripcion],[Categoria],
-                     [HoraConsulta],[MarcaProducto],[NombrePrd],[RegistroInvima],
-                     [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
-                     [Porc.Descuento],[PrecioFidelizacion],[BannerProducto],
-                     [UrlProducto],[RutaImagen])
-                SELECT
-                    a.[Id], a.[FechaInicio], GETDATE(), NULL,
-                    '1', '', '0', '{maquina}', a.[FechaInicio],
-                    a.[PLU], a.[EAN], a.[Descripcion], a.[Categoria],
-                    NULL,'','','','','','','','','','',''
-                FROM {esquema}.{tabla_ins} a
+                DELETE b FROM {esquema}.{tabla_loc} b
+                JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+                WHERE b.FechaInicio < a.FechaInicio
+                   OR b.Estado IN ('100')
+            """)
+            write_log("Info", f"HU02: Registros anteriores eliminados de {tabla_loc}: {cursor.rowcount}", task_name, in_config)
+
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM {esquema}.{tabla_ins} a
                 LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
                 WHERE b.Id IS NULL AND a.Estado='1'
             """)
-            cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} OFF")
-            write_log("Info", f"HU02: Insertados {cursor.rowcount} registros en {tabla_loc}", task_name, in_config)
+            cnt_nuevos = cursor.fetchone()[0]
+            write_log("Info", f"HU02: Nuevos registros para insertar en {tabla_loc}: {cnt_nuevos}", task_name, in_config)
+
+            if cnt_nuevos > 0:
+                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} ON")
+                cursor.execute(f"""
+                    INSERT INTO {esquema}.{tabla_loc}
+                        ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
+                         [Estado],[Observaciones],[Reintentos],[Maquina],[FechaInsumo],
+                         [PLU],[EAN],[Descripcion],[Categoria],
+                         [HoraConsulta],[MarcaProducto],[NombrePrd],[RegistroInvima],
+                         [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
+                         [Porc.Descuento],[PrecioFidelizacion],[BannerProducto],
+                         [UrlProducto],[RutaImagen])
+                    SELECT
+                        a.[Id], a.[FechaInicio], GETDATE(), NULL,
+                        '1', '', '0', '{maquina}', a.[FechaInicio],
+                        a.[PLU], a.[EAN], a.[Descripcion], a.[Categoria],
+                        NULL,'','','','','','','','','','',''
+                    FROM {esquema}.{tabla_ins} a
+                    LEFT JOIN {esquema}.{tabla_loc} b ON a.Id = b.Id
+                    WHERE b.Id IS NULL AND a.Estado='1'
+                """)
+                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_loc} OFF")
+                write_log("Info", f"HU02: Insertados {cursor.rowcount} registros en {tabla_loc}", task_name, in_config)
 
         # ----------------------------------------------------------------
         # PASO 3: Verificar si hay registros pendientes
@@ -659,16 +671,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                                 [UrlProducto]='{url_prd}'
                             WHERE Id='{id_ticket}'
                         """)
-                    elif estado == "3":
-                        cursor.execute(f"""
-                            UPDATE {esquema}.{tabla_loc}
-                            SET [FechaFin]=GETDATE(),
-                                [Estado]='3',
-                                [Observaciones]='{observaciones}',
-                                [RutaImagen]='{ruta_img}',
-                                [UrlProducto]='{url_prd}'
-                            WHERE Id='{id_ticket}'
-                        """)
                     else:
                         banner = "No disponible" if observaciones == "Sin stock" else ""
                         cursor.execute(f"""
@@ -768,7 +770,7 @@ def _generar_reportes(in_config: dict, esquema: str,
     """
     Por cada FechaInicio con registros procesados (Estado 2 o 99):
       - Obtiene estadisticas.
-      - Marca como reportados (2->100, 99->199).
+      - Marca como reportados (2->100), elimina registros Estado=99.
       - Calcula Porc.Descuento.
       - Exporta Excel y envia correo.
     """
@@ -811,18 +813,13 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         f"UPDATE {esquema}.{tabla_loc} SET [Estado]='2' "
         f"WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'"
     )
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='99' "
-        f"WHERE [Estado]='199' AND FechaInicio='{fecha_inicio}'"
-    )
-
     cursor.execute(f"""
         SELECT
             COUNT(*) AS TotalRegistros,
             SUM(CASE WHEN (Estado='2' OR Estado='100') THEN 1 ELSE 0 END) AS CantidadExtraidos,
             SUM(CASE WHEN ((Estado='2' OR Estado='100') AND Observaciones!='Sin stock') THEN 1 ELSE 0 END) AS CantidadEstado2,
             SUM(CASE WHEN ((Estado='2' OR Estado='100') AND Observaciones='Sin stock')  THEN 1 ELSE 0 END) AS CantidadSinStock,
-            SUM(CASE WHEN (Estado='99' OR Estado='199') THEN 1 ELSE 0 END) AS CantidadEstado99
+            SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END) AS CantidadEstado99
         FROM {esquema}.{tabla_loc}
         WHERE FechaInicio='{fecha_inicio}'
     """)
@@ -841,8 +838,8 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         task_name, in_config
     )
 
-    # Calcular Porc.Descuento y limpiar PrecioConDescuento ANTES de cambiar
-    # el estado a 100/199, porque las clausulas WHERE filtan por Estado='2'.
+    # Calcular Porc.Descuento y limpiar PrecioConDescuento ANTES de marcar
+    # el estado a 100, porque las clausulas WHERE filtran por Estado='2'.
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
         SET [PrecioConDescuento]='0'
@@ -866,10 +863,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         f"UPDATE {esquema}.{tabla_loc} SET [Estado]='100' "
         f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
     )
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='199' "
-        f"WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'"
-    )
 
     conn.commit()
     conn.close()
@@ -880,33 +873,25 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     cursor = conn.cursor()
     cursor.execute(f"""
         SELECT
-            [FechaInicio]        AS fechainsumo,
-            [PLU]                AS plu,
-            [Descripcion]        AS descripcion,
-            [FechaModificacion]  AS horaconsulta,
-            [EAN]                AS ean,
-            [Estado]             AS estado,
-            [MarcaProducto]      AS marcaproducto,
-            [NombrePrd]          AS nombreprd,
-            [RegistroInvima]     AS registroinvima,
-            [PrecioUnitario]     AS preciounitario,
-            [PrecioConDescuento] AS preciocondescuento,
-            [PrecioSinDescuento] AS preciosindescuento,
-            [Porc.Descuento]     AS [porc.descuento],
-            [PrecioFidelizacion] AS preciofidelizacion,
-            [BannerProducto]     AS bannerproducto,
-            [UrlProducto]        AS urlproducto,
-            [RutaImagen]         AS rutaimagen
+            [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],[Estado],
+            [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
+            [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
+            [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]
         FROM {esquema}.{tabla_loc}
         WHERE FechaInicio='{fecha_inicio}'
     """)
-    cols  = [col[0] for col in cursor.description]
     filas = cursor.fetchall()
     conn.close()
 
     if not filas:
         return
 
+    cols = [
+        "FechaInsumo", "PLU", "Descripción", "HoraConsulta", "EAN", "Estado",
+        "MarcaProducto", "NombreProducto", "RegistroInvima", "PrecioUnitario",
+        "PrecioConDescuento", "PrecioSinDescuento", "PorcentajeDescuento",
+        "PrecioFidelización", "BannerProducto", "URLProducto", "RutaImagen", "Observación",
+    ]
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
 
     nombre_resultado = in_config["NombreResultado"]
@@ -932,6 +917,12 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         f"HU02: Reporte generado en ({ruta_excel})",
         task_name, in_config
     )
+
+    conn = conectar_bd(in_config)
+    cursor = conn.cursor()
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_loc} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    conn.commit()
+    conn.close()
 
     from_address = in_config.get("_correo", {}).get("usuario", "")
     reemplazo = {"$NombrePagina$": in_config["DrogueriaLocatel"]}

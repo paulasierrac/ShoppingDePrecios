@@ -298,7 +298,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             resultado.update({
                 "nombre_prd":    nombre_prd,
                 "url_producto":  url_producto,
-                "estado":        "3",
+                "estado":        "99",
                 "observaciones": (
                     "No existe coincidencia entre la informacion "
                     "encontrada y el producto consultado"
@@ -383,36 +383,45 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             conn   = conectar_bd(in_config)
             cursor = conn.cursor()
             cursor.execute(f"""
-                DELETE b FROM {esquema}.{tabla_ex} b
+                SELECT COUNT(*) FROM {esquema}.{tabla_ex} b
                 JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
-                WHERE b.FechaInicio < a.FechaInicio
-                   OR b.Estado IN ('100', '199', '3')
+                WHERE b.Estado IN ('1','2','99')
             """)
-            cursor.execute(f"""
-                SELECT a.Id FROM {esquema}.{tabla_ins} a
-                LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
-                WHERE b.Id IS NULL AND a.Estado='1'
-            """)
-            if cursor.fetchone() is not None:
-                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
+            en_progreso = cursor.fetchone()[0] > 0
+            if en_progreso:
+                write_log("Info", "HU02: Retomando ejecucion anterior en progreso", task_name, in_config)
+            else:
                 cursor.execute(f"""
-                    INSERT INTO {esquema}.{tabla_ex}
-                        ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
-                         [Estado],[Maquina],[PLU],[EAN],[Descripcion],
-                         [MarcaProducto],[NombrePrd],[RegistroInvima],
-                         [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
-                         [Porc.Descuento],[PrecioFidelizacion],
-                         [UrlProducto],[BannerProducto],[RutaImagen],
-                         [Observaciones],[Reintentos])
-                    SELECT a.[Id], a.[FechaInicio], GETDATE(), NULL,
-                           '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
-                           '','','','','','','','','','','','',0
-                    FROM {esquema}.{tabla_ins} a
+                    DELETE b FROM {esquema}.{tabla_ex} b
+                    JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
+                    WHERE b.FechaInicio < a.FechaInicio
+                       OR b.Estado IN ('100')
+                """)
+                cursor.execute(f"""
+                    SELECT a.Id FROM {esquema}.{tabla_ins} a
                     LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                     WHERE b.Id IS NULL AND a.Estado='1'
                 """)
-                cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
-                write_log("Info", f"HU02: Nuevos registros insertados en {tabla_ex}", task_name, in_config)
+                if cursor.fetchone() is not None:
+                    cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} ON")
+                    cursor.execute(f"""
+                        INSERT INTO {esquema}.{tabla_ex}
+                            ([Id],[FechaInicio],[FechaModificacion],[FechaFin],
+                             [Estado],[Maquina],[PLU],[EAN],[Descripcion],
+                             [MarcaProducto],[NombrePrd],[RegistroInvima],
+                             [PrecioUnitario],[PrecioConDescuento],[PrecioSinDescuento],
+                             [Porc.Descuento],[PrecioFidelizacion],
+                             [UrlProducto],[BannerProducto],[RutaImagen],
+                             [Observaciones],[Reintentos])
+                        SELECT a.[Id], a.[FechaInicio], GETDATE(), NULL,
+                               '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
+                               '','','','','','','','','','','','',0
+                        FROM {esquema}.{tabla_ins} a
+                        LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
+                        WHERE b.Id IS NULL AND a.Estado='1'
+                    """)
+                    cursor.execute(f"SET IDENTITY_INSERT {esquema}.{tabla_ex} OFF")
+                    write_log("Info", f"HU02: Nuevos registros insertados en {tabla_ex}", task_name, in_config)
             cursor.execute(f"SELECT TOP(1) 1 FROM {esquema}.{tabla_ex} WHERE Estado='1'")
             hay_pendientes = cursor.fetchone() is not None
             conn.commit()
@@ -649,8 +658,27 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         ruta_debug.mkdir(parents=True, exist_ok=True)
         sello      = _now.strftime("%Y%m%d_%H%M%S")
         ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCafam_{sello}.xlsx")
-        pd.DataFrame(resultados).to_excel(ruta_excel, index=False)
-        _incrustar_imagenes(ruta_excel, "Sheet1")
+        df_debug = pd.DataFrame([{
+            "FechaInsumo":        ahora,
+            "PLU":                "",
+            "Descripción":        r.get("Descripcion", ""),
+            "HoraConsulta":       ahora,
+            "EAN":                r.get("EAN", ""),
+            "Estado":             r.get("estado", ""),
+            "MarcaProducto":      r.get("marca", ""),
+            "NombreProducto":     r.get("nombre_prd", ""),
+            "RegistroInvima":     "",
+            "PrecioUnitario":     r.get("precio_unitario", ""),
+            "PrecioConDescuento": r.get("precio_con_desc", ""),
+            "PrecioSinDescuento": r.get("precio_sin_desc", ""),
+            "PorcentajeDescuento": "",
+            "PrecioFidelización": "",
+            "BannerProducto":     r.get("banner", ""),
+            "URLProducto":        r.get("url_producto", ""),
+            "RutaImagen":         r.get("RutaImagen", ""),
+            "Observación":        r.get("observaciones", ""),
+        } for r in resultados])
+        df_debug.to_excel(ruta_excel, index=False)
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
         print(f"\n  Reporte debug: {ruta_excel}")
     conn_sq.close()
@@ -679,13 +707,6 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_ex}
             SET [FechaFin]=GETDATE(),[Estado]='99',
-                [Observaciones]='{obs}',[UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
-            WHERE Id='{id_t}'
-        """)
-    elif estado == "3":
-        cursor.execute(f"""
-            UPDATE {esquema}.{tabla_ex}
-            SET [FechaFin]=GETDATE(),[Estado]='3',
                 [NombrePrd]='{nombre_prd}',[MarcaProducto]='{marca}',
                 [Observaciones]='{obs}',[UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
             WHERE Id='{id_t}'
@@ -791,20 +812,18 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='2'  WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'")
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='99' WHERE [Estado]='199' AND FechaInicio='{fecha_inicio}'")
+    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='2' WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'")
 
     cursor.execute(f"""
         SELECT COUNT(*), SUM(CASE WHEN Estado IN ('2','100') THEN 1 ELSE 0 END),
-               SUM(CASE WHEN Estado IN ('99','199') THEN 1 ELSE 0 END)
+               SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END)
         FROM {esquema}.{tabla_ex} WHERE FechaInicio='{fecha_inicio}'
     """)
     stats = cursor.fetchone() or (0, 0, 0)
     write_log("Info", f"HU02: {fecha_inicio} — Total={stats[0]} Extraidos={stats[1]} Estado99={stats[2]}",
               task_name, in_config)
 
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='100' WHERE [Estado]='2'  AND FechaInicio='{fecha_inicio}'")
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='199' WHERE [Estado]='99' AND FechaInicio='{fecha_inicio}'")
+    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='100' WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'")
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_ex}
         SET [Porc.Descuento] =
@@ -827,13 +846,18 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
                [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]
         FROM {esquema}.{tabla_ex} WHERE FechaInicio='{fecha_inicio}'
     """)
-    cols  = [c[0] for c in cursor.description]
     filas = cursor.fetchall()
     conn.close()
 
     if not filas:
         return
 
+    cols = [
+        "FechaInsumo", "PLU", "Descripción", "HoraConsulta", "EAN", "Estado",
+        "MarcaProducto", "NombreProducto", "RegistroInvima", "PrecioUnitario",
+        "PrecioConDescuento", "PrecioSinDescuento", "PorcentajeDescuento",
+        "PrecioFidelización", "BannerProducto", "URLProducto", "RutaImagen", "Observación",
+    ]
     df = pd.DataFrame([list(row) for row in filas], columns=cols)
     nombre_res  = in_config["NombreResultado"]
     nombre_hoja = in_config["NombreHojaResultado"]
@@ -850,8 +874,14 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     with pd.ExcelWriter(ruta_excel, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name=nombre_hoja, index=False)
 
-    _incrustar_imagenes(ruta_excel, nombre_hoja)
     write_log("Info", f"HU02: Reporte generado en ({ruta_excel})", task_name, in_config)
+
+    conn = conectar_bd(in_config)
+    cursor = conn.cursor()
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    conn.commit()
+    conn.close()
+
     from_addr = in_config.get("_correo", {}).get("usuario", "")
     reemplazo = {"$NombrePagina$": in_config["DrogueriaCafam"]}
     err = enviar_correo(in_config=in_config, i_cod_email=100, i_from_address=from_addr,

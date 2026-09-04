@@ -18,6 +18,7 @@ Robot RPA (migración de Automation Anywhere a Python/Playwright) que extrae pre
 - [Modo debug](#modo-debug)
 - [Base de datos](#base-de-datos)
   - [Mantenimiento de la tabla Parametros](#mantenimiento-de-la-tabla-parametros)
+- [Estructura del reporte Excel](#estructura-del-reporte-excel)
 - [Convenciones de precios](#convenciones-de-precios)
 - [Estados de registros](#estados-de-registros)
 - [Notas técnicas por farmacia](#notas-técnicas-por-farmacia)
@@ -59,6 +60,9 @@ ShoppingDePrecios/
 │   └── InsumoPricing.xlsx          # Archivo de entrada (PLU / EAN / DESCRIPCION / PROVEEDOR / CATEGORIA)
 │
 ├── Resultado/                      # Reportes Excel generados (producción)
+├── debug/                          # Reportes y screenshots de modo debug
+│   ├── YYYY/MM/DD/                 # Subcarpteas por fecha para reportes debug
+│   └── screenshots/<Farmacia>/YYYY/MM/DD/
 ├── pruebas.db                      # SQLite local para modo debug
 └── requirements.txt
 ```
@@ -95,17 +99,12 @@ pip install -r requirements.txt
 | Librería | Versión mínima | Para qué se usa |
 |----------|----------------|-----------------|
 | `pandas` | 2.0 | Lectura del Excel de insumo, generación de reportes Excel y manipulación de datos tabulares en memoria |
-| `selenium` | 4.10 | Dependencia legada — todas las farmacias activas migraron a Playwright. Ya no se usa en HU02 de ninguna farmacia |
 | `playwright` | 1.40 | Motor de scraping web para las cinco farmacias completas (Locatel, Éxito, Cafam, Farmatodo, Cruz Verde). Requiere ejecutar `playwright install chromium` por cada usuario de Windows |
 | `pyodbc` | 5.0 | Conexión a SQL Server mediante ODBC Driver 17/18. Usado en todas las HU para leer parámetros, cargar insumo y guardar resultados |
-| `openpyxl` | 3.1 | Motor de escritura de archivos `.xlsx` usado por pandas (`pd.ExcelWriter(..., engine="openpyxl")`) y para incrustar imágenes en el reporte de Cafam |
-| `Pillow` | 10.0 | Incrustación de thumbnails (screenshots) dentro de los reportes Excel de Cafam |
+| `openpyxl` | 3.1 | Motor de escritura de archivos `.xlsx` usado por pandas (`pd.ExcelWriter(..., engine="openpyxl")`) |
 | `azure-identity` | 1.12 | Autenticación con Azure (credenciales de cuenta de servicio o identidad administrada) para acceder al Key Vault |
 | `azure-keyvault-secrets` | 4.6 | Lectura de secretos desde Azure Key Vault (usuario, contraseña y servidor de BD) |
 | `python-dotenv` | 1.0 | Carga de variables de entorno desde archivo `.env` en desarrollo local |
-| `pydantic` | 2.0 | Validación de modelos de configuración internos |
-| `pydantic-settings` | 2.0 | Carga de settings desde variables de entorno usando modelos Pydantic |
-| `python-dateutil` | 2.8 | Parsing de fechas en distintos formatos (usado internamente por pandas) |
 
 ### 2. Navegador Playwright
 
@@ -252,11 +251,26 @@ python ShoppingDePreciosExito/main.py
 |----|----------------|
 | HU00 | Lee parámetros de SQL Server (solo lectura — sin cambios) |
 | HU01 | Lee `Insumo/InsumoPricing.xlsx` local → CSV en `debug/temp/` → INSERT en `pruebas.db` (no mueve el archivo) |
-| HU02 | Lee de `pruebas.db` → Chrome **visible** → Escribe resultados en `pruebas.db` → Excel en `debug/` |
+| HU02 | Lee de `pruebas.db` → Chrome **visible** → Escribe resultados en `pruebas.db` → Excel en `debug/YYYY/MM/DD/` |
 | Correos | Omitidos |
 | SQL Server (escrituras) | Ninguna escritura en producción; solo lecturas en HU00 |
 
 El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx` y **no se mueve ni elimina** en modo debug, lo que permite re-ejecutar sin regenerar el archivo.
+
+Los reportes Excel y screenshots generados en modo debug se organizan en subcarpetas por fecha dentro de `debug/`:
+
+```
+debug/
+├── 2026/
+│   └── 09/
+│       └── 04/
+│           ├── DEBUG_ReportePricingExito_20260904_143021.xlsx
+│           └── DEBUG_ReportePricingCafam_20260904_143512.xlsx
+└── screenshots/
+    ├── Exito/2026/09/04/
+    ├── Cafam/2026/09/04/
+    └── ...
+```
 
 ---
 
@@ -276,11 +290,22 @@ El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx
 | `Selectores` | Selectores CSS de scraping para Farmatodo (**opcional** — el código usa fallbacks hardcodeados si la tabla no existe o está vacía) |
 | `EnvioCorreos` | Plantillas de correos de notificación |
 
-### Grupos de tablas de resultados
+### Columna Observaciones
 
-**Grupo A** (Locatel, Cafam, CruzVerde) — incluye columnas `Observaciones`, `Reintentos` y `Categoria`.
+Todas las tablas de resultados incluyen una columna `[Observaciones]` que registra el motivo cuando un EAN no se puede extraer correctamente. Ejemplos de valores:
 
-**Grupo B** (Éxito, Farmatodo) — sin `Observaciones` ni `Reintentos`.
+- `"No existe el producto en la farmacia"`
+- `"No existe coincidencia entre la informacion encontrada y el producto consultado"`
+- `"Timeout al cargar la pagina"`
+- `"Sin stock"`
+- `"Error: <mensaje de excepción>"`
+
+Si la columna no existe en una tabla, agregar con:
+
+```sql
+ALTER TABLE [ShoppingDePrecios].[Exito]
+    ADD [Observaciones] NVARCHAR(500) NOT NULL DEFAULT '';
+```
 
 ### Mantenimiento de la tabla Parametros
 
@@ -293,8 +318,6 @@ Ejecutar este script al desplegar en un ambiente nuevo o cuando se detecte un `K
 -- ============================================================
 
 -- HeadlessChrome — CRÍTICO
--- Sin este parámetro todos los HU02 fallan en producción con KeyError.
--- En producción usar "true"; en ambientes de prueba con ventana visible usar "false".
 IF NOT EXISTS (
     SELECT 1 FROM [ShoppingDePrecios].[Parametros] WHERE Nombre = 'HeadlessChrome'
 )
@@ -306,8 +329,6 @@ IF NOT EXISTS (
     );
 
 -- NombreResultado y NombreHojaResultado
--- El código los sobreescribe por farmacia desde HU00 (no depende del valor de BD),
--- pero se corrigen aquí para mantener la tabla consistente.
 UPDATE [ShoppingDePrecios].[Parametros]
 SET    Valor       = 'ReportePricing',
        Descripcion = 'Variable global, prefijo base del archivo de reporte (HU00 agrega el nombre de farmacia)'
@@ -321,10 +342,34 @@ WHERE  Nombre = 'NombreHojaResultado';
 
 > **Nota sobre `NombreResultado` / `NombreHojaResultado`:** la tabla `[Parametros]` contiene un único valor compartido para todas las farmacias, pero cada farmacia necesita un nombre distinto. Cada `HU00_DespliegueAmbiental.py` sobreescribe estos valores con el nombre correcto para su farmacia (p. ej. `ReportePricingExito_` / `ReportePricingExito`) sin importar lo que esté en BD.
 
-### Formato de precios colombiano
+---
 
-- Separador de miles: `.` (punto) → se elimina con `REPLACE('.', '')`
-- Cafam usa `,` como decimal → se convierte con `REPLACE(',', '.')`
+## Estructura del reporte Excel
+
+Todas las farmacias generan un reporte Excel con las mismas **18 columnas** en el mismo orden:
+
+| # | Columna | Descripción |
+|---|---------|-------------|
+| 1 | `FechaInsumo` | Fecha en que se cargó el EAN al sistema |
+| 2 | `PLU` | Código interno PLU de Colsubsidio |
+| 3 | `Descripción` | Descripción del producto en el insumo |
+| 4 | `HoraConsulta` | Fecha y hora de la consulta web |
+| 5 | `EAN` | Código de barras consultado |
+| 6 | `Estado` | Estado del resultado (ver [Estados de registros](#estados-de-registros)) |
+| 7 | `MarcaProducto` | Marca extraída del sitio web |
+| 8 | `NombreProducto` | Nombre del producto extraído del sitio web |
+| 9 | `RegistroInvima` | Registro INVIMA (cuando está disponible en el sitio) |
+| 10 | `PrecioUnitario` | Precio por unidad de medida (PUM) |
+| 11 | `PrecioConDescuento` | Precio final con descuento aplicado |
+| 12 | `PrecioSinDescuento` | Precio regular (precio de lista) |
+| 13 | `PorcentajeDescuento` | Porcentaje de descuento calculado en BD |
+| 14 | `PrecioFidelización` | Precio para clientes del programa de fidelización |
+| 15 | `BannerProducto` | Banner u observación de disponibilidad (ej. `"No disponible"`) |
+| 16 | `URLProducto` | URL directa al producto en el sitio web |
+| 17 | `RutaImagen` | Ruta local al screenshot tomado durante el scraping |
+| 18 | `Observación` | Motivo cuando el EAN no pudo ser extraído correctamente |
+
+> En modo debug, las columnas `PLU`, `PorcentajeDescuento` y `PrecioFidelización` quedan vacías porque no se dispone de esa información sin pasar por el flujo completo de BD.
 
 ---
 
@@ -336,8 +381,8 @@ Todos los HU02 siguen la misma convención para asignar los campos de precio:
 |-------|-----------|
 | `PrecioSinDescuento` | Precio regular (precio de lista, sin descuento aplicado) |
 | `PrecioConDescuento` | Precio final tras aplicar el descuento. **Vacío si no hay descuento activo.** |
-| `Porc.Descuento` | Porcentaje de descuento, calculado como `(SinDesc - ConDesc) * 100 / SinDesc` |
-| `PrecioFidelizacion` | Precio especial para clientes del programa de fidelización (Éxito Club, etc.) |
+| `PorcentajeDescuento` | Calculado como `(SinDesc - ConDesc) * 100 / SinDesc` |
+| `PrecioFidelización` | Precio especial para clientes del programa de fidelización (Éxito Club, etc.) |
 | `PrecioUnitario` | Precio por unidad de medida (PUM). Ej: `(Ml a $ 12,72)` o `Mililitros a $ 14.08` |
 
 > **Regla clave:** Cuando el sitio muestra un solo precio sin tachado (sin descuento activo), el valor se guarda en `PrecioSinDescuento` y `PrecioConDescuento` queda vacío. Esto aplica a Éxito, Farmatodo y Cafam.
@@ -351,61 +396,82 @@ Aplican a todas las tablas de resultados (`Locatel`, `Exito`, `Cafam`, etc.):
 | Estado | Significado |
 |--------|-------------|
 | `1` | Pendiente de consultar |
-| `2` | Producto encontrado |
-| `3` | Sin coincidencia (nombre no corresponde al EAN buscado) |
-| `99` | Sin información (producto no aparece en la búsqueda) |
+| `2` | Información encontrada |
+| `99` | Falla al extraer o información no encontrada |
 | `100` | Consultado y reportado (fue Estado=2) |
-| `199` | Consultado y reportado (fue Estado=99) |
+
+> Los registros con Estado=99 se eliminan de la tabla tras generar el reporte (ya quedan capturados en el Excel). Estado=3 ("sin coincidencia de nombre") también fue eliminado — ese caso se registra ahora como Estado=99 con la observación `"No existe coincidencia entre la informacion encontrada y el producto consultado"`.
 
 ---
 
 ## Notas técnicas por farmacia
 
-### Estrategia de extracción JavaScript
+### Estrategia de selectores CSS
 
-Todas las farmacias usan `page.evaluate()` de Playwright para extraer datos del DOM, pero con enfoques distintos:
+Todas las farmacias usan selectores CSS parciales (`[class*="nombre"]`) en lugar de nombres de clase exactos. Esto las hace robustas ante cambios de versión del framework de cada sitio (hashes de módulo CSS en Next.js, cambios de versión en VTEX, etc.).
+
+| Farmacia | Framework del sitio | Riesgo de cambio de clase |
+|----------|---------------------|--------------------------|
+| Éxito | Next.js (CSS Modules) | Alto — clases con hash (`styles_name__qQJiK`) cambian en cada deploy |
+| Locatel | VTEX | Medio — versiones de módulos VTEX cambian con actualizaciones |
+| Cafam | Doofinder + Phoenix LiveView | Bajo — clases Doofinder son estables |
+| Farmatodo | Angular SPA | Bajo — selectores cargados desde BD (`[Selectores]`) |
+| Cruz Verde | Angular SPA (`ml-card-product`) | Bajo — componentes Angular estables |
+
+### Estrategia de extracción por farmacia
 
 | Farmacia | Estrategia | Detalle |
 |----------|-----------|---------|
 | Cafam | **Bloque JS unificado** | Un solo `page.evaluate()` recorre las tarjetas Doofinder y devuelve un objeto con todos los campos |
-| Cruz Verde | **Bloque JS unificado** | Un solo `page.evaluate()` extrae nombre, precio, PUM e INVIMA de la página de detalle Angular |
-| Éxito | **JS → parse Python** | JS obtiene el `innerHTML` completo de las tarjetas; Python lo parsea con `_entre()` buscando clases CSS por nombre |
-| Locatel | **JS por campo** | Un `page.evaluate()` independiente por cada dato (título, precio, disponibilidad, marca) |
+| Cruz Verde | **Click + navegación** | Hace clic en la primera tarjeta `ml-card-product` y lee `page.url` tras la navegación de Angular Router (no usa `href` del DOM) |
+| Éxito | **JS con selectores parciales** | JS obtiene los campos usando `querySelector('[class*="nombre"]')` para resistir cambios de hash en Next.js |
+| Locatel | **JS por campo con fallbacks** | Un `page.evaluate()` por cada dato, con varios selectores parciales en cascada |
 | Farmatodo | **JS por campo** | Helper `_js_selector(selector)` ejecuta `querySelector(sel)?.textContent` por cada campo |
-
-> **Nota sobre Éxito:** el enfoque de parsear HTML con `_entre()` es frágil ante cambios de clases CSS (los nombres como `styles_name__qQJiK` son generados por el bundler y pueden cambiar entre deploys). Las farmacias con bloque JS unificado son más robustas porque trabajan con la estructura semántica del DOM, no con nombres de clases.
 
 ---
 
 ### Éxito
-- El scraping se realiza sobre la **página de resultados de búsqueda** (`/s?q=EAN`). La URL del producto almacenada puede ser la URL de búsqueda (si el sitio no redirige) o la URL directa del producto (si Éxito la incluye en el HTML de resultados).
-- El `PrecioUnitario` se extrae de la clase `.product-unit_price-unit__text__qeheS`. No todos los productos lo muestran en la página de resultados.
+
+- El scraping se realiza sobre la **página de resultados de búsqueda** (`/s?q=EAN`).
+- Los selectores CSS usan `[class*="..."]` para resistir cambios de hash entre deploys de Next.js. Ejemplo: `[class*="productCard_productCard"]`, `[class*="styles_name"]`.
+- La tabla `[Exito]` requiere la columna `[Observaciones]`. Si no existe, agregar con:
+
+```sql
+ALTER TABLE [ShoppingDePrecios].[Exito]
+    ADD [Observaciones] NVARCHAR(500) NOT NULL DEFAULT '';
+```
+
+---
 
 ### Cafam
-- Cafam usa **Doofinder** con Phoenix LiveView (WebSocket). Para evitar que el sitio detecte múltiples conexiones como tráfico de bot, **se mantiene una sola página por lote** y se reutiliza el campo de búsqueda Doofinder (`.dfd-searchbox-input`) para los EANs subsiguientes.
+
+- Cafam usa **Doofinder** como motor de búsqueda interno. Para evitar detección como bot, se mantiene **una sola página por lote** y se reutiliza el campo de búsqueda (`.dfd-searchbox-input`) para los EANs subsiguientes.
 - El `PrecioUnitario` se transforma del formato `PUM: $ 14.00 ML` al formato `(ML a $ 14.00)` antes de guardar.
-- Los screenshots se **incrustan como thumbnails (160×120 px) directamente en el Excel** de resultado, además de guardarse en disco. Requiere `Pillow>=10.0`.
+- Los screenshots se guardan como ruta de archivo en la columna `RutaImagen`. **No se incrustan imágenes en el Excel.**
+
+---
 
 ### Farmatodo
-- Los selectores CSS se cargan desde la tabla `[ShoppingDePrecios].[Selectores]` con `Competencia='FARMATODO'`. Si la tabla no existe o está vacía, el código usa los siguientes **selectores por defecto** basados en el HTML real del sitio (Angular SPA):
 
-  | Campo | Selector CSS |
-  |-------|-------------|
-  | Nombre | `.text-title` |
-  | Marca | `.text-brand` |
-  | Precio con descuento | `.price__text-price` |
-  | Precio sin descuento | `.price__text-offer-price` |
-  | PUM | `.price__text-price-unit` |
-  | Banner | `.offer-description__text` |
-  | URL producto | `a.content-product[href]` |
+- Los selectores CSS se cargan desde la tabla `[ShoppingDePrecios].[Selectores]` con `Competencia='FARMATODO'`. Si la tabla no existe o está vacía, el código usa selectores por defecto basados en el HTML actual del sitio (Angular SPA).
+- Farmatodo llama a `navigator.geolocation.getCurrentPosition()` al cargar, lo que puede causar una redirección a `buscar?product=Bogotá` en lugar del EAN. El bot neutraliza esto inyectando un stub de geolocalización vía `context.add_init_script()` antes de navegar.
+
+---
 
 ### Locatel
+
 - Locatel redirige directamente a la página de detalle del producto cuando hay un único resultado por EAN (URL con `/p?skuId=`). El scraper detecta ambos casos (página de detalle vs. página de resultados).
+- Los selectores CSS usan `[class*="..."]` para resistir cambios de versión de módulos VTEX. Ejemplo: `[class*="productBrand"]`, `[class*="sellingPriceValue"]`.
 - El `Porc.Descuento` se calcula en BD durante la generación del reporte, antes de marcar los registros como Estado=100.
 
+---
+
 ### Cruz Verde
-- Cruz Verde es una SPA Angular con componentes `ml-card-product`. Los datos se extraen via JavaScript sobre el DOM de la página de detalle del producto.
-- Los campos `RegistroInvima` y `PrecioUnitario` se incluyen cuando están disponibles en la página.
+
+- Cruz Verde es una SPA Angular con componentes `ml-card-product` que usan Angular Router. Los enlaces **no tienen atributo `href`** estándar en el DOM.
+- Para obtener la URL del producto, el bot hace **clic en la tarjeta** (tercio superior para evitar el botón "Agregar") y espera la navegación con `page.wait_for_url()`. Luego lee `page.url`.
+- Tras navegar al detalle, los campos (nombre, precio, PUM, INVIMA, marca) se extraen con un bloque JS unificado sobre la página de detalle.
+- El bot distingue resultados reales de carruseles de recomendación ("Quizás te puede interesar") verificando que `document.body.innerText` no contenga `"no encontramos resultados"` antes de intentar hacer clic.
 
 ---
 
@@ -449,6 +515,10 @@ El proxy corporativo hace inspección SSL (Deep Packet Inspection). Playwright e
 
 Ocurre si se crea una nueva página (`context.new_page()`) por cada EAN en Cafam. El sitio detecta múltiples conexiones HTTP como bot y las aborta. La solución implementada es usar **una sola página por lote** y cambiar el EAN usando el campo de búsqueda de Doofinder.
 
+### URL de producto vacía en Cruz Verde (`"URL de resultado no válida: ''"`)
+
+Cruz Verde usa Angular Router — los componentes `ml-card-product` no tienen atributo `href` estándar en el DOM. La extracción de URL vía `querySelector('a[href]')` o `[routerlink]` devuelve vacío. La solución implementada es hacer clic en la tarjeta y leer `page.url` tras la navegación.
+
 ### Registros duplicados en tablas de resultados
 
 Causado por ejecutar HU01 múltiples veces con `DELETE FROM` en lugar de `TRUNCATE TABLE`. `TRUNCATE` resetea el contador IDENTITY, evitando que se generen IDs duplicados. Todos los HU01 ya usan `TRUNCATE TABLE`.
@@ -457,6 +527,6 @@ Causado por ejecutar HU01 múltiples veces con `DELETE FROM` en lugar de `TRUNCA
 
 Ocurre si el cálculo del porcentaje de descuento se ejecuta después de que el estado ya cambió a `100`. El UPDATE de `Porc.Descuento` debe correr mientras los registros aún están en Estado=`2`. Esta corrección ya está aplicada en el código.
 
-### Imágenes no incrustadas en el Excel de Cafam
+### Farmatodo busca "Bogotá" en lugar del EAN
 
-Requiere `Pillow>=10.0`. Verificar con `pip install Pillow>=10.0`. Si `Pillow` no está disponible, `_incrustar_imagenes` falla silenciosamente y el Excel se genera sin thumbnails (las rutas de imagen siguen presentes en la columna `RutaImagen`).
+Farmatodo invoca `navigator.geolocation.getCurrentPosition()` al cargar, detecta la ciudad y redirige a `buscar?product=Bogotá`. La solución implementada inyecta un stub de geolocalización antes de cada navegación vía `context.add_init_script()`, que devuelve coordenadas fijas (Bogotá) sin disparar el mecanismo de redirección del sitio.
