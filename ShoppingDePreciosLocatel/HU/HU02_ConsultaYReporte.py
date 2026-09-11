@@ -308,17 +308,34 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         resultado["precio_sin_desc"] = precio_sin_desc
 
         # ── Disponibilidad / Stock ─────────────────────────────────────
-        # Prioridad: si existe el botón de compra (buttonPdp) → disponible,
-        # aunque buttonNoPdp también esté en el DOM (puede estar oculto).
+        # VTEX mantiene AMBOS botones en el DOM; solo los visibles indican estado real.
+        # Estrategia (orden de prioridad):
+        #   1. Botón buttonPdp visible (COMPRAR de VTEX) → disponible
+        #   2. Cualquier <button> visible, no disabled, con texto COMPRAR/AGREGAR → disponible
+        #   3. Botón buttonNoPdp visible → sin stock
+        #   4. Texto "AGOTADO"/"SIN STOCK" en la página → sin stock
+        #   5. Sin señal → asume disponible ("Texto no encontrado")
         disponibilidad_raw = _js(
             page,
             "(()=>{"
-            "  const buy=document.querySelector("
-            "    '.locatelcolombia-delivery-modal-0-x-buttonPdp');"
-            "  if(buy) return 'disponible';"
-            "  const no=document.querySelector("
-            "    '.locatelcolombia-delivery-modal-0-x-buttonNoPdp');"
-            "  if(no) return no.innerText.trim()||'Sin stock';"
+            "  function vis(el){"
+            "    if(!el) return false;"
+            "    const s=window.getComputedStyle(el);"
+            "    return s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';"
+            "  }"
+            "  const buy=document.querySelector('[class*=\"buttonPdp\"]:not([class*=\"buttonNoPdp\"])');"
+            "  if(vis(buy)) return 'disponible';"
+            "  const btns=[...document.querySelectorAll('button')];"
+            "  for(const b of btns){"
+            "    if(b.disabled) continue;"
+            "    const t=(b.innerText||'').trim().toUpperCase();"
+            "    if((t.includes('COMPRAR')||t.includes('AGREGAR'))&&vis(b)) return 'disponible';"
+            "  }"
+            "  const no=document.querySelector('[class*=\"buttonNoPdp\"]');"
+            "  if(vis(no)) return no.innerText.trim()||'Sin stock';"
+            "  const body=document.body.innerText.toUpperCase();"
+            "  if(body.includes('AGOTADO')||body.includes('SIN STOCK')||body.includes('NO DISPONIBLE'))"
+            "    return 'Sin stock';"
             "  return 'Texto no encontrado';"
             "})()"
         )
@@ -362,8 +379,9 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             return resultado
 
         sin_stock = (
-            disponibilidad_raw.lower() not in ("disponible", "texto no encontrado", "")
+            "no encontrado" not in disponibilidad_raw.lower()
             and disponibilidad_raw.strip() != ""
+            and disponibilidad_raw.lower() != "disponible"
         )
 
         if sin_stock:
