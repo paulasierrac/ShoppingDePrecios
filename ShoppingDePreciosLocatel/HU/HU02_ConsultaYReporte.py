@@ -308,13 +308,19 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         resultado["precio_sin_desc"] = precio_sin_desc
 
         # ── Disponibilidad / Stock ─────────────────────────────────────
-        # Si aparece el botón "sin stock" (buttonNoPdp) → sin stock.
-        # Si solo existe "buttonPdp" (COMPRAR) → disponible.
+        # Prioridad: si existe el botón de compra (buttonPdp) → disponible,
+        # aunque buttonNoPdp también esté en el DOM (puede estar oculto).
         disponibilidad_raw = _js(
             page,
-            "(document.querySelector("
-            "'.locatelcolombia-delivery-modal-0-x-buttonNoPdp')"
-            "?.innerText.trim()) || 'Texto no encontrado'"
+            "(()=>{"
+            "  const buy=document.querySelector("
+            "    '.locatelcolombia-delivery-modal-0-x-buttonPdp');"
+            "  if(buy) return 'disponible';"
+            "  const no=document.querySelector("
+            "    '.locatelcolombia-delivery-modal-0-x-buttonNoPdp');"
+            "  if(no) return no.innerText.trim()||'Sin stock';"
+            "  return 'Texto no encontrado';"
+            "})()"
         )
         resultado["disponibilidad"] = str(disponibilidad_raw or "Texto no encontrado")
 
@@ -356,7 +362,7 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             return resultado
 
         sin_stock = (
-            "no encontrado" not in disponibilidad_raw.lower()
+            disponibilidad_raw.lower() not in ("disponible", "texto no encontrado", "")
             and disponibilidad_raw.strip() != ""
         )
 
