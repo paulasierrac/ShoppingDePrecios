@@ -873,7 +873,8 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     cursor = conn.cursor()
     cursor.execute(f"""
         SELECT
-            [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],[Estado],
+            [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],
+            CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
             [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
             [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
             [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]

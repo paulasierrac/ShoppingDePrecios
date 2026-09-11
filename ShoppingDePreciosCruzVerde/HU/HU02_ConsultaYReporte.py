@@ -682,14 +682,6 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
                 [Observaciones]='{obs}',[UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
             WHERE Id='{id_t}'
         """)
-    elif estado == "3":
-        cursor.execute(f"""
-            UPDATE {esquema}.{tabla_ex}
-            SET [FechaFin]=GETDATE(),[Estado]='3',
-                [NombrePrd]='{nombre_prd}',[MarcaProducto]='{marca}',
-                [Observaciones]='{obs}',[UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
-            WHERE Id='{id_t}'
-        """)
     else:
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_ex}
@@ -758,7 +750,8 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     cursor = conn.cursor()
 
     cursor.execute(f"""
-        SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],[Estado],
+        SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],
+               CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
                [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
                [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
                [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]

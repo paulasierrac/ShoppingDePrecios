@@ -266,6 +266,7 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
         "url_producto":    "",
         "banner":          "",
         "estado":          "99",
+        "observaciones":   "Sin información en Farmatodo",
     }
 
     url_busqueda = url_template.replace("REEMPLAZAR", ean)
@@ -353,6 +354,20 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
             precio_sin_val = precio_con_val
             precio_con_val = ""
 
+        # Nombre encontrado pero sin ningún precio → Estado=99
+        if nombre_prd and not precio_con_val and not precio_sin_val:
+            write_log("Info",
+                      f"HU02: EAN ({ean}) — Nombre encontrado pero sin precio disponible",
+                      task_name, in_config)
+            resultado.update({
+                "nombre_prd":    nombre_prd,
+                "marca":         marca,
+                "url_producto":  url_prod,
+                "estado":        "99",
+                "observaciones": "Nombre encontrado pero sin precio disponible",
+            })
+            return resultado
+
         resultado.update({
             "nombre_prd":      nombre_prd,
             "marca":           marca,
@@ -363,14 +378,17 @@ def _consultar_ean_farmatodo(page: Page, ean: str, url_template: str,
             "url_producto":    url_prod,
             "banner":          banner,
             "estado":          "2",
+            "observaciones":   "",
         })
 
     except PlaywrightTimeout:
         write_log("Warning", f"HU02: Timeout consultando EAN ({ean})", task_name, in_config)
-        resultado["estado"] = "99"
+        resultado["estado"]        = "99"
+        resultado["observaciones"] = "Timeout al cargar la pagina"
     except Exception as e:
         write_log("Warning", f"HU02: Error consultando EAN ({ean}): {e}", task_name, in_config)
-        resultado["estado"] = "99"
+        resultado["estado"]        = "99"
+        resultado["observaciones"] = f"Error: {e}"
 
     return resultado
 
@@ -811,7 +829,8 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     cursor = conn.cursor()
 
     cursor.execute(f"""
-        SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],[Estado],
+        SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],
+               CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
                [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
                [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
                [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]

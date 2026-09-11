@@ -728,67 +728,6 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
 
 
 # ============================================================
-# Incrustado de imagenes en Excel
-# ============================================================
-
-def _incrustar_imagenes(ruta_excel: str, nombre_hoja: str,
-                         col_ruta_img: str = "RutaImagen") -> None:
-    """Sustituye la columna de rutas de screenshot por miniaturas incrustadas."""
-    try:
-        import io
-        from openpyxl import load_workbook
-        from openpyxl.drawing.image import Image as XlImage
-        from PIL import Image as PILImage
-    except ImportError:
-        return  # Sin Pillow los reportes quedan con la ruta como texto
-
-    try:
-        wb = load_workbook(ruta_excel)
-    except Exception:
-        return
-
-    if nombre_hoja not in wb.sheetnames:
-        return
-    ws = wb[nombre_hoja]
-
-    header = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
-    if col_ruta_img not in header:
-        return
-    img_col = header.index(col_ruta_img) + 1  # 1-based index
-
-    THUMB_W, THUMB_H = 160, 120   # pixeles
-    ROW_H_PT         = 90          # points (~120 px a 96dpi)
-    col_letter = ws.cell(row=1, column=img_col).column_letter
-    ws.column_dimensions[col_letter].width = 23
-
-    for row_idx in range(2, ws.max_row + 1):
-        cell = ws.cell(row=row_idx, column=img_col)
-        ruta = cell.value
-        if not ruta or not os.path.isfile(str(ruta)):
-            continue
-        try:
-            with PILImage.open(str(ruta)) as pil_img:
-                pil_img = pil_img.convert("RGB")
-                pil_img.thumbnail((THUMB_W, THUMB_H), PILImage.LANCZOS)
-                buf = io.BytesIO()
-                pil_img.save(buf, format="JPEG", quality=70)
-                buf.seek(0)
-            xl_img         = XlImage(buf)
-            xl_img.width   = THUMB_W
-            xl_img.height  = THUMB_H
-            cell.value     = None   # borrar texto de la celda
-            ws.add_image(xl_img, f"{col_letter}{row_idx}")
-            ws.row_dimensions[row_idx].height = ROW_H_PT
-        except Exception:
-            pass  # si la imagen falla, deja la ruta como texto
-
-    try:
-        wb.save(ruta_excel)
-    except Exception:
-        pass
-
-
-# ============================================================
 # Generacion de reportes Excel (modo normal)
 # ============================================================
 
@@ -840,7 +779,8 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     cursor = conn.cursor()
 
     cursor.execute(f"""
-        SELECT [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],[Estado],
+        SELECT [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],
+               CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
                [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
                [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
                [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]
