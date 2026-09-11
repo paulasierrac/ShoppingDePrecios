@@ -165,9 +165,18 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
 
     try:
         page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(ESPERA_CARGA)
         _descartar_modal(page)
-        page.wait_for_timeout(1000)
+        # Esperar a que Angular termine las llamadas XHR de búsqueda
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        # Esperar a que el DOM muestre tarjetas de resultado
+        try:
+            page.wait_for_selector("ml-card-product", timeout=5000)
+        except Exception:
+            pass
+        _descartar_modal(page)
 
         # ── Verificar si hay resultados ────────────────────────────────────
         has_results = False
@@ -196,7 +205,15 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
                     page.reload(wait_until="domcontentloaded", timeout=60000)
                 except Exception:
                     pass
-                page.wait_for_timeout(ESPERA_CARGA)
+                _descartar_modal(page)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=12000)
+                except Exception:
+                    pass
+                try:
+                    page.wait_for_selector("ml-card-product", timeout=5000)
+                except Exception:
+                    pass
                 _descartar_modal(page)
 
         _tomar_screenshot(page, ruta_screenshot)
@@ -515,7 +532,6 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True,
         )
-        page = context.new_page()
 
         try:
             for row in registros:
@@ -532,7 +548,14 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
                 conn.close()
 
                 write_log("Info", f"HU02: Consultando EAN ({ean})", task_name, in_config)
-                res = _consultar_ean_cruzverde(page, ean, url_template, ruta_ss, in_config, task_name)
+                page = context.new_page()
+                try:
+                    res = _consultar_ean_cruzverde(page, ean, url_template, ruta_ss, in_config, task_name)
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
                 _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name)
         finally:
             try:
@@ -557,6 +580,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
 
 def _scraping_debug(browser, in_config, esquema, tabla_ins,
                     url_template, ruta_ss_base, task_name):
+    tabla_ex   = in_config["TablaCruzVerde"]
     lote_debug = int(in_config["LoteDebug"])
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
@@ -582,7 +606,6 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         viewport={"width": 1920, "height": 1080},
         ignore_https_errors=True,
     )
-    page = context.new_page()
 
     try:
         for row in registros:
@@ -591,7 +614,14 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             desc = str(row[2] or "")
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
-            res = _consultar_ean_cruzverde(page, ean, url_template, ruta_ss, in_config, task_name)
+            page = context.new_page()
+            try:
+                res = _consultar_ean_cruzverde(page, ean, url_template, ruta_ss, in_config, task_name)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
             resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
     finally:
@@ -603,10 +633,10 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
     if resultados:
         ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         maquina = socket.gethostname()
-        cur_sq.execute(f"DELETE FROM {esquema}.CruzVerde")
+        cur_sq.execute(f"DELETE FROM {esquema}.{tabla_ex}")
         for r in resultados:
             cur_sq.execute(
-                f"INSERT INTO {esquema}.CruzVerde "
+                f"INSERT INTO {esquema}.{tabla_ex} "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
@@ -620,7 +650,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
                  "", r.get("banner", ""), r.get("url_producto", ""), r.get("RutaImagen", ""))
             )
         conn_sq.commit()
-        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.CruzVerde)",
+        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.{tabla_ex})",
                   task_name, in_config)
 
         _now       = datetime.now()

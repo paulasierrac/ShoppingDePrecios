@@ -159,7 +159,18 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                           f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
                           task_name, in_config)
                 return resultado
-            page.wait_for_timeout(ESPERA_CARGA)
+            # Esperar a que aparezcan tarjetas reales o el bloque sin-resultados,
+            # en lugar de un wait fijo de 30s que puede expirar antes o despues
+            # de que Phoenix LiveView termine de hacer stream de los resultados.
+            try:
+                page.wait_for_selector(
+                    '.dfd-card-live, .dfd-no-results',
+                    timeout=ESPERA_CARGA
+                )
+            except PlaywrightTimeout:
+                write_log("Warning",
+                          f"HU02: EAN ({ean}) — Timeout esperando resultados Doofinder",
+                          task_name, in_config)
         else:
             # EANs siguientes: reusar la pagina y buscar via el input de Doofinder.
             # Crear nueva pagina por EAN genera ERR_ABORTED porque Cafam usa
@@ -170,7 +181,19 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             try:
                 page.fill('.dfd-searchbox-input', ean)
                 page.keyboard.press('Enter')
-                page.wait_for_timeout(ESPERA_CARGA)
+                # Breve espera para que Phoenix LiveView limpie las tarjetas anteriores
+                # antes de esperar las nuevas; sin esto wait_for_selector retorna
+                # inmediatamente al encontrar los resultados del EAN previo.
+                page.wait_for_timeout(ESPERA_REINT)
+                try:
+                    page.wait_for_selector(
+                        '.dfd-card-live, .dfd-no-results',
+                        timeout=ESPERA_CARGA - ESPERA_REINT
+                    )
+                except PlaywrightTimeout:
+                    write_log("Warning",
+                              f"HU02: EAN ({ean}) — Timeout esperando resultados Doofinder",
+                              task_name, in_config)
             except Exception as search_err:
                 write_log("Warning",
                           f"HU02: Error buscando EAN ({ean}) via input Doofinder: {search_err}",
@@ -178,7 +201,13 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                 # Fallback: navegacion completa
                 try:
                     page.goto(url_busqueda, wait_until="domcontentloaded", timeout=60000)
-                    page.wait_for_timeout(ESPERA_CARGA)
+                    try:
+                        page.wait_for_selector(
+                            '.dfd-card-live, .dfd-no-results',
+                            timeout=ESPERA_CARGA
+                        )
+                    except PlaywrightTimeout:
+                        pass
                 except Exception as nav_err:
                     write_log("Warning",
                               f"HU02: Error de navegacion EAN ({ean}): {str(nav_err)[:150]}",
@@ -188,13 +217,21 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         # ── Detectar "sin resultados" via clase CSS ───────────────────────
         # Cafam usa Doofinder: cuando el EAN no existe muestra div.dfd-no-results
         # con "Productos recomendados" que tambien tienen dfd-card-link y
-        # dfd-card-title. Detectar por clase es mas fiable que por texto.
+        # dfd-card-title. Solo se considera sin-resultados si dfd-no-results
+        # existe Y ademas no hay ninguna tarjeta real fuera de ese bloque.
         sin_resultados = False
         for _ in range(3):
             try:
-                sin_resultados = page.evaluate(
-                    "!!document.querySelector('.dfd-no-results')"
-                ) or False
+                sin_resultados = page.evaluate("""
+                    (() => {
+                        const noRes = document.querySelector('.dfd-no-results');
+                        if (!noRes) return false;
+                        const hayTarjeta = !!document.querySelector(
+                            '.dfd-card-live:not(.dfd-no-results .dfd-card-live)'
+                        );
+                        return !hayTarjeta;
+                    })()
+                """) or False
                 break
             except Exception:
                 page.wait_for_timeout(ESPERA_REINT)
@@ -581,6 +618,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
 
 def _scraping_debug(browser, in_config, esquema, tabla_ins,
                     url_template, ruta_ss_base, task_name):
+    tabla_ex   = in_config["TablaCafam"]
     lote_debug = int(in_config["LoteDebug"])
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
@@ -630,10 +668,10 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
     if resultados:
         ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         maquina = socket.gethostname()
-        cur_sq.execute(f"DELETE FROM {esquema}.Cafam")
+        cur_sq.execute(f"DELETE FROM {esquema}.{tabla_ex}")
         for r in resultados:
             cur_sq.execute(
-                f"INSERT INTO {esquema}.Cafam "
+                f"INSERT INTO {esquema}.{tabla_ex} "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Observaciones, Reintentos, Maquina, "
                 " PLU, EAN, Descripcion, Categoria, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], PrecioFidelizacion, "
@@ -649,7 +687,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
                  r.get("url_producto", ""), r.get("RutaImagen", ""))
             )
         conn_sq.commit()
-        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.Cafam)",
+        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.{tabla_ex})",
                   task_name, in_config)
 
         _now       = datetime.now()

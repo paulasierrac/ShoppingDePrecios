@@ -47,7 +47,7 @@ from playwright.sync_api import sync_playwright, Page, TimeoutError as Playwrigh
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
-from Funciones.utils import write_log, conectar_bd, csv_a_excel, enviar_correo
+from Funciones.utils import write_log, conectar_bd, conectar_bd_debug, csv_a_excel, enviar_correo
 
 
 # ============================================================
@@ -205,8 +205,18 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
             page.wait_for_timeout(1500)
             return resultado
 
-        # Primer EAN: esperar 12 s para que el banner inicial desaparezca (~10 s)
-        page.wait_for_timeout(12000 if primer_ean else ESPERA_5S)
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_selector(
+                'h1[class*="name-products"], [class*="productName"], [class*="productBrand"], '
+                '[class*="clearLink"], [class*="itemList"]',
+                timeout=8000,
+            )
+        except Exception:
+            pass
         _cerrar_modales_locatel(page, task_name, in_config)
 
         # ── URL y Titulo del primer producto ──────────────────────────
@@ -417,6 +427,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         tabla_ins    = in_config["TablaTicketInsumo"]
         url_template = in_config.get("UrlLocatel") or ""
         debug        = in_config.get("_debug", False)
+        _fn_conn     = conectar_bd_debug if debug else conectar_bd
         lote         = int(in_config["LoteDebug"]) if debug else int(in_config["LoteLocatel"])
         reintentos_r = in_config["ReintentosReprocesamiento"]
         maquina      = socket.gethostname()
@@ -424,7 +435,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         # ----------------------------------------------------------------
         # PASO 1: Reprocesar registros "Sin stock" con reintentos disponibles
         # ----------------------------------------------------------------
-        conn   = conectar_bd(in_config)
+        conn   = _fn_conn(in_config)
         cursor = conn.cursor()
 
         cursor.execute(f"""
@@ -573,7 +584,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
         hay_mas = True
         while hay_mas:
-            conn   = conectar_bd(in_config)
+            conn   = _fn_conn(in_config)
             cursor = conn.cursor()
 
             cursor.execute(f"""
@@ -616,7 +627,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 palabra_clave = str(row[2] or "")
 
                 try:
-                    conn   = conectar_bd(in_config)
+                    conn   = _fn_conn(in_config)
                     cursor = conn.cursor()
                     cursor.execute(f"""
                         UPDATE {esquema}.{tabla_loc}
@@ -650,7 +661,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     )
                     primer_ean = False
 
-                    conn   = conectar_bd(in_config)
+                    conn   = _fn_conn(in_config)
                     cursor = conn.cursor()
                     estado        = resultado["estado"]
                     observaciones = resultado["observaciones"][:250].replace("'", "''")
@@ -712,7 +723,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                         except Exception:
                             pass
 
-            conn   = conectar_bd(in_config)
+            conn   = _fn_conn(in_config)
             cursor = conn.cursor()
             cursor.execute(f"""
                 SELECT COUNT(*) FROM {esquema}.{tabla_loc} WHERE Estado='1'

@@ -465,10 +465,11 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                              [Estado],[Maquina],[PLU],[EAN],[Descripcion],
                              [MarcaProducto],[NombrePrd],[RegistroInvima],
                              [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
-                             [PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen],[HoraConsulta])
+                             [PrecioFidelizacion],[UrlProducto],[BannerProducto],[RutaImagen],
+                             [HoraConsulta],[Observaciones])
                         SELECT a.[Id], a.[FechaInicio], GETDATE(), NULL,
                                '1', '{maquina}', a.[PLU], a.[EAN], a.[Descripcion],
-                               '','','','','','','','','','',GETDATE()
+                               '','','','','','','','','','',GETDATE(),''
                         FROM {esquema}.{tabla_ins} a
                         LEFT JOIN {esquema}.{tabla_ex} b ON a.Id = b.Id
                         WHERE b.Id IS NULL AND a.Estado='1'
@@ -627,6 +628,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
 
 def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
                     selectores, ruta_ss_base, task_name):
+    tabla_ex   = in_config["TablaFarmatodo"]
     lote_debug = int(in_config["LoteDebug"])
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
@@ -681,25 +683,26 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
     if resultados:
         ahora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         maquina = socket.gethostname()
-        cur_sq.execute(f"DELETE FROM {esquema}.Farmatodo")
+        cur_sq.execute(f"DELETE FROM {esquema}.{tabla_ex}")
         for r in resultados:
             cur_sq.execute(
-                f"INSERT INTO {esquema}.Farmatodo "
+                f"INSERT INTO {esquema}.{tabla_ex} "
                 "(FechaInicio, FechaModificacion, FechaFin, Estado, Maquina, "
                 " PLU, EAN, Descripcion, HoraConsulta, MarcaProducto, NombrePrd, RegistroInvima, "
                 " PrecioUnitario, PrecioConDescuento, PrecioSinDescuento, [Porc.Descuento], "
-                " PrecioFidelizacion, UrlProducto, BannerProducto, RutaImagen) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " PrecioFidelizacion, UrlProducto, BannerProducto, RutaImagen, Observaciones) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
                  r.get("estado", "99"), maquina,
                  "", r["EAN"], r["Descripcion"], ahora,
                  r.get("marca", ""), r.get("nombre_prd", ""), r.get("registro_invima", ""),
                  r.get("precio_unitario", ""),
                  r.get("precio_con_desc", ""), r.get("precio_sin_desc", ""), "",
-                 "", r.get("url_producto", ""), r.get("banner", ""), r.get("RutaImagen", ""))
+                 "", r.get("url_producto", ""), r.get("banner", ""), r.get("RutaImagen", ""),
+                 r.get("observaciones", ""))
             )
         conn_sq.commit()
-        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.Farmatodo)",
+        write_log("Info", f"[DEBUG] {len(resultados)} registros guardados en ({esquema}.{tabla_ex})",
                   task_name, in_config)
 
         _now       = datetime.now()
@@ -748,6 +751,7 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
     reg_inv     = res["registro_invima"].replace("'", "''")
     url_prd     = res["url_producto"].replace("'", "''")
     banner      = res["banner"].replace("'", "''")
+    obs         = res.get("observaciones", "").replace("'", "''")
     ruta_img    = ruta_ss.replace("'", "''")
 
     conn   = conectar_bd(in_config)
@@ -757,6 +761,7 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_ex}
             SET [FechaFin]=GETDATE(),[Estado]='99',
+                [Observaciones]='{obs}',
                 [UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
             WHERE Id='{id_t}'
         """)
@@ -769,6 +774,7 @@ def _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name):
                 [PrecioUnitario]='{precio_unit}',
                 [PrecioConDescuento]='{precio_con}',[PrecioSinDescuento]='{precio_sin}',
                 [BannerProducto]='{banner}',
+                [Observaciones]='{obs}',
                 [UrlProducto]='{url_prd}',[RutaImagen]='{ruta_img}'
             WHERE Id='{id_t}'
         """)

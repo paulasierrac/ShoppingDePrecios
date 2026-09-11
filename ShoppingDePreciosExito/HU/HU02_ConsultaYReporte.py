@@ -180,7 +180,17 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
 
     try:
         page.goto(url_consulta, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(ESPERA_5S)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_selector(
+                '[class*="productCard_productCard"], [class*="ProductCard"], [class*="product-card"]',
+                timeout=5000,
+            )
+        except Exception:
+            pass
 
         # ── Extrae la primera tarjeta via JS con selectores parciales ─────────
         # Los hashes CSS de Next.js (ej. __M0677) cambian con cada deploy de Exito,
@@ -253,7 +263,17 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
                     page.reload(wait_until="domcontentloaded", timeout=30000)
                 except Exception:
                     pass
-                page.wait_for_timeout(ESPERA_5S)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                try:
+                    page.wait_for_selector(
+                        '[class*="productCard_productCard"], [class*="ProductCard"], [class*="product-card"]',
+                        timeout=5000,
+                    )
+                except Exception:
+                    pass
 
         if datos is None:
             write_log("Info", f"HU02: EAN ({ean}) — No existe el producto en la farmacia",
@@ -605,7 +625,6 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True,
         )
-        page = context.new_page()
 
         try:
             for row in registros:
@@ -632,15 +651,22 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                     task_name, in_config
                 )
 
-                res = _consultar_ean_exito(
-                    page=page,
-                    ean=ean,
-                    palabra_clave=palabra_clave,
-                    url_template=url_template,
-                    ruta_screenshot=ruta_ss,
-                    in_config=in_config,
-                    task_name=task_name,
-                )
+                page = context.new_page()
+                try:
+                    res = _consultar_ean_exito(
+                        page=page,
+                        ean=ean,
+                        palabra_clave=palabra_clave,
+                        url_template=url_template,
+                        ruta_screenshot=ruta_ss,
+                        in_config=in_config,
+                        task_name=task_name,
+                    )
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
 
                 conn   = _conectar(in_config)
                 cursor = conn.cursor()
