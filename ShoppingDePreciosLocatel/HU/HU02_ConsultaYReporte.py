@@ -11,12 +11,9 @@ Propiedad de Colsubsidio
 ================================================================================
 
 Estados en TablaLocatel:
-  1   : Pendiente de consultar
-  2   : Producto encontrado
-  3   : Sin coincidencia (titulo no corresponde al EAN)
-  99  : Sin informacion (producto no aparece en la busqueda)
-  100 : Consultado y reportado (fue Estado=2)
-  199 : Consultado y reportado (fue Estado=99)
+  1  : Pendiente de consultar
+  2  : Producto encontrado (se elimina de la tabla al generar el reporte)
+  99 : Sin informacion / error al extraer (se elimina de la tabla al generar el reporte)
 
 Flujo principal:
   1. Reprocesa registros "Sin stock" que aun tienen reintentos disponibles.
@@ -465,7 +462,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_loc}
             SET Estado='1', FechaModificacion=GETDATE(), Reintentos=Reintentos+1
-            WHERE (Estado='2' OR Estado='100')
+            WHERE Estado='2'
               AND [Observaciones]='Sin stock'
               AND Reintentos<={reintentos_r}
         """)
@@ -488,7 +485,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 DELETE b FROM {esquema}.{tabla_loc} b
                 JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
                 WHERE b.FechaInicio < a.FechaInicio
-                   OR b.Estado IN ('100')
             """)
             write_log("Info", f"HU02: Registros anteriores eliminados de {tabla_loc}: {cursor.rowcount}", task_name, in_config)
 
@@ -805,7 +801,7 @@ def _generar_reportes(in_config: dict, esquema: str,
     """
     Por cada FechaInicio con registros procesados (Estado 2 o 99):
       - Obtiene estadisticas.
-      - Marca como reportados (2->100), elimina registros Estado=99.
+      - Elimina registros Estado=2 y Estado=99 tras exportar al Excel.
       - Calcula Porc.Descuento.
       - Exporta Excel y envia correo.
     """
@@ -844,16 +840,12 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='2' "
-        f"WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'"
-    )
     cursor.execute(f"""
         SELECT
             COUNT(*) AS TotalRegistros,
-            SUM(CASE WHEN (Estado='2' OR Estado='100') THEN 1 ELSE 0 END) AS CantidadExtraidos,
-            SUM(CASE WHEN ((Estado='2' OR Estado='100') AND Observaciones!='Sin stock') THEN 1 ELSE 0 END) AS CantidadEstado2,
-            SUM(CASE WHEN ((Estado='2' OR Estado='100') AND Observaciones='Sin stock')  THEN 1 ELSE 0 END) AS CantidadSinStock,
+            SUM(CASE WHEN Estado='2' THEN 1 ELSE 0 END) AS CantidadExtraidos,
+            SUM(CASE WHEN (Estado='2' AND Observaciones!='Sin stock') THEN 1 ELSE 0 END) AS CantidadEstado2,
+            SUM(CASE WHEN (Estado='2' AND Observaciones='Sin stock')  THEN 1 ELSE 0 END) AS CantidadSinStock,
             SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END) AS CantidadEstado99
         FROM {esquema}.{tabla_loc}
         WHERE FechaInicio='{fecha_inicio}'
@@ -873,8 +865,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
         task_name, in_config
     )
 
-    # Calcular Porc.Descuento y limpiar PrecioConDescuento ANTES de marcar
-    # el estado a 100, porque las clausulas WHERE filtran por Estado='2'.
+    # Calcular Porc.Descuento y limpiar PrecioConDescuento sobre registros Estado='2'.
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
         SET [PrecioConDescuento]='0'
@@ -894,11 +885,6 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
           AND TRY_CAST(PrecioConDescuento AS INT) > 0
     """)
 
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_loc} SET [Estado]='100' "
-        f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
-    )
-
     conn.commit()
     conn.close()
 
@@ -909,7 +895,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     cursor.execute(f"""
         SELECT
             [FechaInicio],[PLU],[Descripcion],[FechaModificacion],[EAN],
-            CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
+            [Estado],
             [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
             [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
             [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]
@@ -956,7 +942,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
 
     conn = conectar_bd(in_config)
     cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {esquema}.{tabla_loc} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_loc} WHERE Estado IN ('99','2') AND FechaInicio='{fecha_inicio}'")
     conn.commit()
     conn.close()
 

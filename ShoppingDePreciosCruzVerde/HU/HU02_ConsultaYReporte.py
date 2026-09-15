@@ -402,7 +402,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     DELETE b FROM {esquema}.{tabla_ex} b
                     JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
                     WHERE b.FechaInicio < a.FechaInicio
-                       OR b.Estado IN ('100')
                 """)
                 cursor.execute(f"""
                     SELECT a.Id FROM {esquema}.{tabla_ins} a
@@ -480,8 +479,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
         # ── PASO 5: Reporte ───────────────────────────────────────────────
-        if not debug:
-            _generar_reportes(in_config, esquema, tabla_ex, task_name)
+        _generar_reportes(in_config, esquema, tabla_ex, task_name)
 
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
@@ -752,10 +750,8 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='2' WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'")
-
     cursor.execute(f"""
-        SELECT COUNT(*), SUM(CASE WHEN Estado IN ('2','100') THEN 1 ELSE 0 END),
+        SELECT COUNT(*), SUM(CASE WHEN Estado='2' THEN 1 ELSE 0 END),
                SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END)
         FROM {esquema}.{tabla_ex} WHERE FechaInicio='{fecha_inicio}'
     """)
@@ -763,13 +759,12 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
     write_log("Info", f"HU02: {fecha_inicio} — Total={stats[0]} Extraidos={stats[1]} Estado99={stats[2]}",
               task_name, in_config)
 
-    cursor.execute(f"UPDATE {esquema}.{tabla_ex} SET [Estado]='100' WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'")
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_ex}
         SET [Porc.Descuento] =
             ((TRY_CAST(PrecioSinDescuento AS FLOAT) - TRY_CAST(PrecioConDescuento AS FLOAT)) * 100)
             / TRY_CAST(PrecioSinDescuento AS FLOAT)
-        WHERE Estado='100' AND FechaInicio='{fecha_inicio}'
+        WHERE Estado='2' AND FechaInicio='{fecha_inicio}'
           AND TRY_CAST(PrecioSinDescuento AS FLOAT) > 0
           AND TRY_CAST(PrecioConDescuento AS FLOAT) > 0
           AND TRY_CAST(PrecioSinDescuento AS FLOAT) != TRY_CAST(PrecioConDescuento AS FLOAT)
@@ -781,7 +776,7 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
 
     cursor.execute(f"""
         SELECT [FechaInicio],[PLU],[Descripcion],[HoraConsulta],[EAN],
-               CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
+               [Estado],
                [MarcaProducto],[NombrePrd],[RegistroInvima],[PrecioUnitario],
                [PrecioConDescuento],[PrecioSinDescuento],[Porc.Descuento],
                [PrecioFidelizacion],[BannerProducto],[UrlProducto],[RutaImagen],[Observaciones]
@@ -818,7 +813,7 @@ def _generar_reporte_fecha(in_config, esquema, tabla_ex, fecha_inicio, fecha_sel
 
     conn = conectar_bd(in_config)
     cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado IN ('99','2') AND FechaInicio='{fecha_inicio}'")
     conn.commit()
     conn.close()
 

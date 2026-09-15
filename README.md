@@ -252,7 +252,7 @@ python ShoppingDePreciosExito/main.py
 | HU00 | Lee parámetros de SQL Server (solo lectura — sin cambios) |
 | HU01 | Lee `Insumo/InsumoPricing.xlsx` local → CSV en `debug/temp/` → INSERT en `pruebas.db` (no mueve el archivo) |
 | HU02 | Lee de `pruebas.db` → Chrome **visible** → Escribe resultados en `pruebas.db` → Excel en `debug/YYYY/MM/DD/` |
-| Correos | Omitidos |
+| Correos | Enviados (igual que en producción; el Excel va a `debug/YYYY/MM/DD/`) |
 | SQL Server (escrituras) | Ninguna escritura en producción; solo lecturas en HU00 |
 
 El archivo de insumo local de pruebas se encuentra en `Insumo/InsumoPricing.xlsx` y **no se mueve ni elimina** en modo debug, lo que permite re-ejecutar sin regenerar el archivo.
@@ -396,11 +396,16 @@ Aplican a todas las tablas de resultados (`Locatel`, `Exito`, `Cafam`, etc.):
 | Estado | Significado |
 |--------|-------------|
 | `1` | Pendiente de consultar |
-| `2` | Información encontrada |
-| `99` | Falla al extraer o información no encontrada |
+| `2` | Información encontrada (scraping exitoso) |
+| `99` | Sin información / error al extraer |
 | `100` | Consultado y reportado (fue Estado=2) |
 
-> Los registros con Estado=99 se eliminan de la tabla tras generar el reporte (ya quedan capturados en el Excel). Estado=3 ("sin coincidencia de nombre") también fue eliminado — ese caso se registra ahora como Estado=99 con la observación `"No existe coincidencia entre la informacion encontrada y el producto consultado"`.
+**Ciclo de vida durante la generación del reporte:**
+1. Se calculan estadísticas y el `Porc.Descuento` sobre los registros `Estado='2'`.
+2. El Excel se genera con los registros `Estado='2'` y `Estado='99'` de esa `FechaInicio`.
+3. Ambos estados se eliminan de la tabla tras exportar (quedan capturados en el Excel). La tabla queda vacía al finalizar.
+
+> Estado=3, Estado=100 y Estado=199 fueron eliminados del sistema. Los casos que antes usaban Estado=3 se registran ahora como Estado=99 con observación descriptiva.
 
 ---
 
@@ -417,6 +422,17 @@ Todas las farmacias usan selectores CSS parciales (`[class*="nombre"]`) en lugar
 | Cafam | Doofinder + Phoenix LiveView | Bajo — clases Doofinder son estables |
 | Farmatodo | Angular SPA | Bajo — selectores cargados desde BD (`[Selectores]`) |
 | Cruz Verde | Angular SPA (`ml-card-product`) | Bajo — componentes Angular estables |
+
+### Estrategia de espera tras `page.goto()`
+
+Todas las farmacias usan esperas orientadas a eventos en lugar de `page.wait_for_timeout()` fijo:
+
+| Paso | Código |
+|------|--------|
+| 1 | `page.wait_for_load_state("networkidle", timeout=N)` — espera a que las peticiones XHR terminen |
+| 2 | `page.wait_for_selector(SELECTOR, timeout=M)` — espera a que el primer elemento de resultado aparezca en el DOM |
+
+Ambos pasos están dentro de `try/except` para que si se agota el tiempo la ejecución continúe igual. Esto elimina los falsos Estado=99 causados por Angular/Next.js que renderizan los resultados de forma asíncrona.
 
 ### Estrategia de extracción por farmacia
 
@@ -463,6 +479,7 @@ ALTER TABLE [ShoppingDePrecios].[Exito]
 - Locatel redirige directamente a la página de detalle del producto cuando hay un único resultado por EAN (URL con `/p?skuId=`). El scraper detecta ambos casos (página de detalle vs. página de resultados).
 - Los selectores CSS usan `[class*="..."]` para resistir cambios de versión de módulos VTEX. Ejemplo: `[class*="productBrand"]`, `[class*="sellingPriceValue"]`.
 - El `Porc.Descuento` se calcula en BD durante la generación del reporte, antes de marcar los registros como Estado=100.
+- **Detección de stock:** VTEX mantiene en el DOM tanto `buttonPdp` (comprar) como `buttonNoPdp` (sin stock) al mismo tiempo, ocultando uno via CSS. La detección usa 4 estrategias en cascada: ① `buttonPdp` visible → disponible, ② botón `<button>` con texto COMPRAR/AGREGAR visible y no deshabilitado → disponible, ③ `buttonNoPdp` visible → sin stock, ④ texto "AGOTADO"/"SIN STOCK" en la página → sin stock. Si ninguna señal está presente, se asume disponible.
 
 ---
 
@@ -526,6 +543,32 @@ Causado por ejecutar HU01 múltiples veces con `DELETE FROM` en lugar de `TRUNCA
 ### `Porc.Descuento` vacío en Locatel
 
 Ocurre si el cálculo del porcentaje de descuento se ejecuta después de que el estado ya cambió a `100`. El UPDATE de `Porc.Descuento` debe correr mientras los registros aún están en Estado=`2`. Esta corrección ya está aplicada en el código.
+
+### Locatel marca como "Sin stock" productos que sí tienen precio y se pueden comprar
+
+**Causa:** VTEX mantiene en el DOM ambos botones (`buttonPdp` y `buttonNoPdp`) simultáneamente; el que no aplica está oculto con `display:none`. El selector original buscaba solo `buttonNoPdp` sin verificar visibilidad, detectando falsamente productos disponibles como sin stock.
+
+**Solución implementada:** el bot ahora aplica 4 estrategias en orden de prioridad:
+1. `buttonPdp` visible (`getComputedStyle.display !== 'none'`) → disponible
+2. Cualquier `<button>` visible, no deshabilitado, con texto COMPRAR o AGREGAR → disponible
+3. `buttonNoPdp` visible → sin stock
+4. Texto "AGOTADO", "SIN STOCK" o "NO DISPONIBLE" en el body → sin stock
+
+Si ninguna señal se detecta, se asume disponible.
+
+### Nombre de tabla hardcodeado en modo debug (Cafam / Cruz Verde / Farmatodo)
+
+**Causa:** las funciones `_scraping_debug` de estas tres farmacias tenían el nombre de la tabla escrito literalmente (ej. `DELETE FROM {esquema}.Cafam`) en lugar de usar la variable `tabla_ex` que proviene de `in_config`.
+
+**Solución:** cada `_scraping_debug` ahora deriva la tabla al inicio: `tabla_ex = in_config["TablaCafam"]` (análogo para CruzVerde y Farmatodo) y la usa en todos los DELETE/INSERT/log.
+
+### Reporte/correo no se envía al finalizar (Cafam / Cruz Verde / Farmatodo)
+
+**Causa:** las funciones `hu02_*` de estas tres farmacias tenían la llamada a `_generar_reportes` dentro de un bloque `if not debug:`, lo que impedía su ejecución tanto en modo debug como (en caso de alguna inconsistencia) en producción.
+
+**Solución:** se eliminó el guard `if not debug:`. La función `_generar_reporte_fecha` ya gestiona internamente la ruta correcta según el modo (`debug/` con prefijo `DEBUG_` en modo debug; `RutaReporte` de BD en producción). El comportamiento ahora es consistente con Éxito y Locatel, que siempre generan y envían el reporte.
+
+---
 
 ### Farmatodo busca "Bogotá" en lugar del EAN
 
