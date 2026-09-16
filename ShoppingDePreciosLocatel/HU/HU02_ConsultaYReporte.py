@@ -179,7 +179,7 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
     """
     resultado = {
         "titulo":           "",
-        "precio_con_desc":  "0",
+        "precio_con_desc":  "",
         "precio_sin_desc":  "",
         "marca":            "",
         "url_producto":     "",
@@ -299,7 +299,7 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
 
         if not precio_sin_desc:
             precio_sin_desc = precio_con_desc
-            precio_con_desc = "0"
+            precio_con_desc = ""
 
         resultado["precio_con_desc"] = precio_con_desc
         resultado["precio_sin_desc"] = precio_sin_desc
@@ -868,7 +868,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     # Calcular Porc.Descuento y limpiar PrecioConDescuento sobre registros Estado='2'.
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_loc}
-        SET [PrecioConDescuento]='0'
+        SET [PrecioConDescuento]=''
         WHERE [Estado]='2'
           AND FechaInicio='{fecha_inicio}'
           AND TRY_CAST(PrecioSinDescuento AS INT) = TRY_CAST(PrecioConDescuento AS INT)

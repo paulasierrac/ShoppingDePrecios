@@ -52,7 +52,7 @@ Comportamiento en debug:
 - HU00: lee parámetros de SQL Server normalmente (solo lectura)
 - HU01: lee `Insumo/InsumoPricing.xlsx` **local** → CSV en `debug/temp/` → INSERT en `pruebas.db.TicketInsumo` (no mueve el archivo)
 - HU02: lee de `pruebas.db.TicketInsumo` → Chrome visible → escribe en `pruebas.db.<Farmacia>` → Excel en `debug/`
-- Correos: omitidos
+- Correos: enviados igual que en producción (Excel adjunto desde `debug/YYYY/MM/DD/`)
 - SQL Server: solo lecturas en HU00, ninguna escritura
 
 ## Parámetros clave en `[ShoppingDePrecios].[Parametros]`

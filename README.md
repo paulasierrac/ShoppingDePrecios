@@ -478,7 +478,7 @@ ALTER TABLE [ShoppingDePrecios].[Exito]
 
 - Locatel redirige directamente a la página de detalle del producto cuando hay un único resultado por EAN (URL con `/p?skuId=`). El scraper detecta ambos casos (página de detalle vs. página de resultados).
 - Los selectores CSS usan `[class*="..."]` para resistir cambios de versión de módulos VTEX. Ejemplo: `[class*="productBrand"]`, `[class*="sellingPriceValue"]`.
-- El `Porc.Descuento` se calcula en BD durante la generación del reporte, antes de marcar los registros como Estado=100.
+- El `Porc.Descuento` se calcula en BD durante la generación del reporte, antes de eliminar los registros de la tabla.
 - **Detección de stock:** VTEX mantiene en el DOM tanto `buttonPdp` (comprar) como `buttonNoPdp` (sin stock) al mismo tiempo, ocultando uno via CSS. La detección usa 4 estrategias en cascada: ① `buttonPdp` visible → disponible, ② botón `<button>` con texto COMPRAR/AGREGAR visible y no deshabilitado → disponible, ③ `buttonNoPdp` visible → sin stock, ④ texto "AGOTADO"/"SIN STOCK" en la página → sin stock. Si ninguna señal está presente, se asume disponible.
 
 ---

@@ -347,6 +347,11 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         precio_sin = datos["precio_sin"]
         precio_con = datos["precio_con"]
 
+        # Precio único (sin descuento) → debe ir a PrecioSinDescuento
+        if not precio_sin and precio_con:
+            precio_sin = precio_con
+            precio_con = ""
+
         write_log("Info",
                   f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}' "
                   f"precio_sin={precio_sin} precio_con={precio_con}",
@@ -389,7 +394,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
     write_log("Info", "Inicia HU02", task_name, in_config)
     if debug:
-        write_log("Info", "[DEBUG] Modo debug activo: sin escrituras en BD ni correos", task_name, in_config)
+        write_log("Info", "[DEBUG] Modo debug activo: Chrome visible, BD Dev, reportes en ./debug/", task_name, in_config)
 
     pw_instance = None
     browser     = None
@@ -521,7 +526,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             conn.close()
 
         # ── PASO 6: Reporte ───────────────────────────────────────────────
-        _generar_reportes(in_config, esquema, tabla_ex, task_name)
+        if not debug:
+            _generar_reportes(in_config, esquema, tabla_ex, task_name)
 
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
@@ -717,6 +723,14 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         df_debug.to_excel(ruta_excel, index=False)
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
         print(f"\n  Reporte debug: {ruta_excel}")
+
+        from_addr = in_config.get("_correo", {}).get("usuario", "")
+        reemplazo = {"$NombrePagina$": in_config["DrogueriaCafam"]}
+        err = enviar_correo(in_config=in_config, i_cod_email=100, i_from_address=from_addr,
+                            i_replace_in_message=reemplazo, i_replace_in_subject=reemplazo,
+                            i_html_format=False, i_attachment=[ruta_excel])
+        if err:
+            write_log("Info", f"HU02: No fue posible enviar correo: {err}", task_name, in_config)
     conn_sq.close()
 
 

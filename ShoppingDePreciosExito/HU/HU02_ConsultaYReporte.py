@@ -11,12 +11,9 @@ Propiedad de Colsubsidio
 ================================================================================
 
 Estados en TablaExito:
-  1   : Pendiente de consultar
-  2   : Producto encontrado
-  3   : Sin coincidencia (titulo no corresponde al EAN)
-  99  : Sin informacion (producto no aparece en la busqueda)
-  100 : Consultado y reportado (fue Estado=2)
-  199 : Consultado y reportado (fue Estado=99)
+  1  : Pendiente de consultar
+  2  : Producto encontrado (se elimina de la tabla al generar el reporte)
+  99 : Sin informacion / error al extraer (se elimina de la tabla al generar el reporte)
 
 Flujo principal:
   1. Inserta en TablaExito los IDs nuevos que esten en TicketInsumo
@@ -417,7 +414,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 DELETE b FROM {esquema}.{tabla_ex} b
                 JOIN {esquema}.{tabla_ins} a ON a.Id = b.Id
                 WHERE b.FechaInicio < a.FechaInicio
-                   OR b.Estado IN ('100')
             """)
             filas_eliminadas = cursor.rowcount
             if filas_eliminadas:
@@ -538,12 +534,12 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_ex}
             SET [PrecioConDescuento] = REPLACE([PrecioConDescuento], '.', '')
-            WHERE Estado='2' OR Estado='100'
+            WHERE Estado='2'
         """)
         cursor.execute(f"""
             UPDATE {esquema}.{tabla_ex}
             SET [PrecioSinDescuento] = REPLACE([PrecioSinDescuento], '.', '')
-            WHERE Estado='2' OR Estado='100'
+            WHERE Estado='2'
         """)
         conn.commit()
         conn.close()
@@ -767,18 +763,12 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
     conn   = conectar_bd(in_config)
     cursor = conn.cursor()
 
-    # Restaurar estados intermedios si los hubiera
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_ex} SET [Estado]='2' "
-        f"WHERE [Estado]='100' AND FechaInicio='{fecha_inicio}'"
-    )
-
     # Estadisticas
     cursor.execute(f"""
         SELECT
-            COUNT(*)                                                             AS TotalRegistros,
-            SUM(CASE WHEN Estado IN ('2','100') THEN 1 ELSE 0 END)              AS CantidadExtraidos,
-            SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END)                        AS CantidadEstado99
+            COUNT(*)                                          AS TotalRegistros,
+            SUM(CASE WHEN Estado='2' THEN 1 ELSE 0 END)      AS CantidadExtraidos,
+            SUM(CASE WHEN Estado='99' THEN 1 ELSE 0 END)     AS CantidadEstado99
         FROM {esquema}.{tabla_ex}
         WHERE FechaInicio='{fecha_inicio}'
     """)
@@ -794,19 +784,13 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
         task_name, in_config
     )
 
-    # Marcar encontrados como reportados
-    cursor.execute(
-        f"UPDATE {esquema}.{tabla_ex} SET [Estado]='100' "
-        f"WHERE [Estado]='2' AND FechaInicio='{fecha_inicio}'"
-    )
-
     # Calcular porcentaje de descuento
     cursor.execute(f"""
         UPDATE {esquema}.{tabla_ex}
         SET [Porc.Descuento] =
             ((TRY_CAST([PrecioSinDescuento] AS INT) - TRY_CAST([PrecioConDescuento] AS INT)) * 100)
             / TRY_CAST([PrecioSinDescuento] AS INT)
-        WHERE [Estado]='100'
+        WHERE [Estado]='2'
           AND FechaInicio='{fecha_inicio}'
           AND TRY_CAST([PrecioSinDescuento] AS INT) > 0
           AND TRY_CAST([PrecioConDescuento] AS INT) > 0
@@ -825,7 +809,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
             [Descripcion],
             [FechaModificacion],
             [EAN],
-            CASE WHEN [Estado]='100' THEN '2' ELSE [Estado] END AS Estado,
+            [Estado],
             [MarcaProducto],
             [NombrePrd],
             [RegistroInvima],
@@ -880,7 +864,7 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_ex: str,
 
     conn = conectar_bd(in_config)
     cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado='99' AND FechaInicio='{fecha_inicio}'")
+    cursor.execute(f"DELETE FROM {esquema}.{tabla_ex} WHERE Estado IN ('99','2') AND FechaInicio='{fecha_inicio}'")
     conn.commit()
     conn.close()
 

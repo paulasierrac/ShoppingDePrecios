@@ -318,9 +318,17 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
             })
             return resultado
 
+        precio_con_val = _limpiar_precio(precio_con)
+        precio_sin_val = _limpiar_precio(precio_sin)
+
+        # Precio único (sin descuento) → debe ir a PrecioSinDescuento
+        if precio_con_val and not precio_sin_val:
+            precio_sin_val = precio_con_val
+            precio_con_val = ""
+
         write_log("Info",
                   f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}' "
-                  f"precio_con={_limpiar_precio(precio_con)} precio_sin={_limpiar_precio(precio_sin)}",
+                  f"precio_sin={precio_sin_val} precio_con={precio_con_val}",
                   task_name, in_config)
 
         resultado.update({
@@ -328,8 +336,8 @@ def _consultar_ean_cruzverde(page: Page, ean: str,
             "marca":           marca,
             "registro_invima": invima,
             "precio_unitario": pum,
-            "precio_con_desc": _limpiar_precio(precio_con),
-            "precio_sin_desc": _limpiar_precio(precio_sin),
+            "precio_con_desc": precio_con_val,
+            "precio_sin_desc": precio_sin_val,
             "url_producto":    url_producto,
             "banner":          "Sin stock" if sin_stock else "",
             "estado":          "2",
@@ -359,7 +367,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
 
     write_log("Info", "Inicia HU02", task_name, in_config)
     if debug:
-        write_log("Info", "[DEBUG] Modo debug activo: sin escrituras en BD ni correos", task_name, in_config)
+        write_log("Info", "[DEBUG] Modo debug activo: Chrome visible, BD Dev, reportes en ./debug/", task_name, in_config)
 
     pw_instance = None
     browser     = None
@@ -479,7 +487,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
         write_log("Info", "HU02: Termina consulta de productos por EAN", task_name, in_config)
 
         # ── PASO 5: Reporte ───────────────────────────────────────────────
-        _generar_reportes(in_config, esquema, tabla_ex, task_name)
+        if not debug:
+            _generar_reportes(in_config, esquema, tabla_ex, task_name)
 
         write_log("Info", "Finaliza HU02", task_name, in_config)
 
@@ -680,6 +689,14 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         df_debug.to_excel(ruta_excel, index=False)
         write_log("Info", f"[DEBUG] Reporte en ({ruta_excel})", task_name, in_config)
         print(f"\n  Reporte debug: {ruta_excel}")
+
+        from_addr = in_config.get("_correo", {}).get("usuario", "")
+        reemplazo = {"$NombrePagina$": in_config["DrogueriaCruzVerde"]}
+        err = enviar_correo(in_config=in_config, i_cod_email=100, i_from_address=from_addr,
+                            i_replace_in_message=reemplazo, i_replace_in_subject=reemplazo,
+                            i_html_format=False, i_attachment=[ruta_excel])
+        if err:
+            write_log("Info", f"HU02: No fue posible enviar correo: {err}", task_name, in_config)
     conn_sq.close()
 
 
