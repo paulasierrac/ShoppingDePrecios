@@ -130,7 +130,7 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
 # Logica de scraping por EAN en Cafam
 # ============================================================
 
-def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
+def _consultar_ean_cafam(page: Page, ean: str,
                           url_template: str, ruta_screenshot: str,
                           in_config: dict, task_name: str,
                           primer_ean: bool = False) -> dict:
@@ -344,36 +344,10 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         url_producto = datos["url"]
         resultado["url_producto"] = url_producto
 
-        # ── Validar que el resultado corresponde al EAN buscado ───────────
-        # data-item.reference contiene el EAN exacto del producto encontrado
-        # por Doofinder; es la fuente más fiable.  Como respaldo se comprueba
-        # si el EAN buscado aparece en la URL (Cafam siempre lo incluye).
-        # Solo si ninguna de las dos comprobaciones pasa se usa el nombre
-        # como filtro secundario para rechazar sustitutos de Doofinder.
-        # Esto resuelve falsos negativos por acentos/espacios: "Pro Lertus"
-        # vs "PROLERTUS", "Acetaminofén" vs "ACETAMINOFEN", etc.
-        referencia = datos.get("reference", "")
-        ean_correcto = (bool(referencia) and referencia == ean) \
-                    or (bool(ean) and ean in url_producto)
-        if not ean_correcto:
-            kw = (palabra_clave or "").upper().strip()
-            if kw and kw not in nombre_prd.upper():
-                write_log("Info",
-                          f"HU02: EAN ({ean}) — Sin coincidencia: "
-                          f"nombre='{nombre_prd}', kw='{palabra_clave}'",
-                          task_name, in_config)
-                _tomar_screenshot(page, ruta_screenshot)
-                resultado.update({
-                    "nombre_prd":    nombre_prd,
-                    "url_producto":  url_producto,
-                    "estado":        "99",
-                    "observaciones": (
-                        "No existe coincidencia entre la informacion "
-                        "encontrada y el producto consultado"
-                    ),
-                })
-                return resultado
-
+        # Si Cafam devolvió una tarjeta para este EAN, se captura su precio
+        # independientemente de si el EAN o el nombre coinciden exactamente.
+        # Doofinder puede indexar el mismo producto bajo un EAN distinto al
+        # del insumo; lo que importa es registrar el precio que Cafam muestra.
         sin_stock = datos["availability"] not in ("in stock", "disponible", "")
         precio_sin = datos["precio_sin"]
         precio_con = datos["precio_con"]
@@ -593,11 +567,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
         conn   = conectar_bd(in_config)
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT TOP({lote}) [Id], [EAN],
-                LEFT(LTRIM(SUBSTRING(Descripcion,
-                    PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
-                    CHARINDEX(' ', LTRIM(SUBSTRING(Descripcion,
-                        PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)) + ' ') - 1)
+            SELECT TOP({lote}) [Id], [EAN]
             FROM {esquema}.{tabla_ex} WHERE Estado='1'
         """)
         registros = cursor.fetchall()
@@ -617,7 +587,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
         page = context.new_page()
         try:
             for i, row in enumerate(registros):
-                id_t, ean, kw = str(row[0]), str(row[1]), str(row[2] or "")
+                id_t, ean = str(row[0]), str(row[1])
                 ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
 
                 conn   = conectar_bd(in_config)
@@ -627,7 +597,7 @@ def _scraping_normal(browser, in_config, esquema, tabla_ex, url_template,
                 conn.close()
 
                 write_log("Info", f"HU02: Consultando EAN ({ean})", task_name, in_config)
-                res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name,
+                res = _consultar_ean_cafam(page, ean, url_template, ruta_ss, in_config, task_name,
                                            primer_ean=(i == 0))
                 _persistir(in_config, esquema, tabla_ex, id_t, ruta_ss, res, task_name)
         finally:
@@ -687,11 +657,9 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             ean  = str(row[1])
             desc = str(row[2] or "")
             plu  = str(row[3] or "")
-            m    = re.search(r'[a-zA-Z]{3,}', desc)
-            kw   = m.group(0) if m else ""
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
-            res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name,
+            res = _consultar_ean_cafam(page, ean, url_template, ruta_ss, in_config, task_name,
                                        primer_ean=(i == 0))
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
             resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "PLU": plu, "RutaImagen": ruta_ss, **res})
