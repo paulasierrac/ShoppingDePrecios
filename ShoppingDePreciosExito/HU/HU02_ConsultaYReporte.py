@@ -144,7 +144,7 @@ def _tomar_screenshot(page: Page, ruta: str) -> None:
 # Logica de scraping por EAN en Exito
 # ============================================================
 
-def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
+def _consultar_ean_exito(page: Page, ean: str,
                          url_template: str, ruta_screenshot: str,
                          in_config: dict, task_name: str) -> dict:
     """
@@ -291,28 +291,7 @@ def _consultar_ean_exito(page: Page, ean: str, palabra_clave: str,
             resultado["observaciones"] = "Tarjeta encontrada pero sin nombre extraible"
             return resultado
 
-        # ── Validar que el nombre corresponda a la palabra clave ──────────────
-        nombre_upper = nombre_prd.upper()
-        kw_upper     = (palabra_clave or "").upper().strip()
-
-        if kw_upper and kw_upper not in nombre_upper:
-            write_log("Info",
-                      f"HU02: EAN ({ean}) — Sin coincidencia: nombre='{nombre_prd}', "
-                      f"palabra_clave='{palabra_clave}'",
-                      task_name, in_config)
-            _tomar_screenshot(page, ruta_screenshot)
-            resultado.update({
-                "nombre_prd":    nombre_prd,
-                "marca":         marca,
-                "url_producto":  url_producto,
-                "estado":        "99",
-                "observaciones": (
-                    f"Sin coincidencia: nombre='{nombre_prd}', "
-                    f"palabra_clave='{palabra_clave}'"
-                ),
-            })
-            return resultado
-
+        # Si Éxito devolvió un resultado para este EAN, se captura su precio.
         write_log("Info", f"HU02: EAN ({ean}) — Producto encontrado: '{nombre_prd}'",
                   task_name, in_config)
         _tomar_screenshot(page, ruta_screenshot)
@@ -590,16 +569,7 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
         cursor = conn.cursor()
 
         cursor.execute(f"""
-            SELECT TOP({lote})
-                [Id], [EAN],
-                LEFT(
-                    LTRIM(SUBSTRING(Descripcion,
-                        PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
-                    CHARINDEX(' ',
-                        LTRIM(SUBSTRING(Descripcion,
-                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
-                        + ' ') - 1
-                )
+            SELECT TOP({lote}) [Id], [EAN]
             FROM {esquema}.{tabla_ex}
             WHERE Estado='1'
         """)
@@ -624,9 +594,8 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
 
         try:
             for row in registros:
-                id_ticket     = str(row[0])
-                ean           = str(row[1])
-                palabra_clave = str(row[2] or "")
+                id_ticket = str(row[0])
+                ean       = str(row[1])
 
                 conn   = _conectar(in_config)
                 cursor = conn.cursor()
@@ -652,7 +621,6 @@ def _ejecutar_scraping_normal(browser, in_config, esquema, tabla_ex, tabla_ins,
                     res = _consultar_ean_exito(
                         page=page,
                         ean=ean,
-                        palabra_clave=palabra_clave,
                         url_template=url_template,
                         ruta_screenshot=ruta_ss,
                         in_config=in_config,

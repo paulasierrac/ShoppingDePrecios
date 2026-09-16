@@ -168,7 +168,7 @@ def _cerrar_modales_locatel(page: Page, task_name: str, in_config: dict) -> None
 # Logica de scraping por EAN en Locatel
 # ============================================================
 
-def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
+def _consultar_ean(page: Page, ean: str, url_template: str,
                    ruta_screenshot: str, in_config: dict, task_name: str,
                    primer_ean: bool = False) -> dict:
     """
@@ -356,25 +356,7 @@ def _consultar_ean(page: Page, ean: str, palabra_clave: str, url_template: str,
         )
         resultado["marca"] = str(marca_raw or "")
 
-        # ── Determinar estado del registro ────────────────────────────
-        titulo_upper = titulo.upper()
-        kw_upper     = (palabra_clave or "").upper().strip()
-
-        if kw_upper and kw_upper not in titulo_upper:
-            write_log(
-                "Info",
-                f"HU02: EAN ({ean}) — Sin coincidencia: titulo='{titulo}', "
-                f"palabra_clave='{palabra_clave}'",
-                task_name, in_config
-            )
-            _tomar_screenshot(page, ruta_screenshot)
-            resultado["estado"]        = "99"
-            resultado["observaciones"] = (
-                "No existe coincidencia entre la informacion encontrada "
-                "y el producto consultado"
-            )
-            return resultado
-
+        # Si Locatel devolvió un resultado para este EAN, se captura su precio.
         sin_stock = (
             "no encontrado" not in disponibilidad_raw.lower()
             and disponibilidad_raw.strip() != ""
@@ -608,27 +590,7 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
             cursor = conn.cursor()
 
             cursor.execute(f"""
-                SELECT TOP({lote}) [Id], [EAN],
-                    ISNULL(
-                        NULLIF(
-                            LEFT(
-                                LTRIM(SUBSTRING(Descripcion,
-                                    PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100)),
-                                CASE
-                                    WHEN CHARINDEX(' ',
-                                        LTRIM(SUBSTRING(Descripcion,
-                                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
-                                        + ' ') > 1
-                                    THEN CHARINDEX(' ',
-                                        LTRIM(SUBSTRING(Descripcion,
-                                            PATINDEX('%[a-zA-Z][a-zA-Z][a-zA-Z]%', Descripcion), 100))
-                                        + ' ') - 1
-                                    ELSE LEN(Descripcion)
-                                END
-                            ), ''
-                        ), ''
-                    ),
-                    [PLU]
+                SELECT TOP({lote}) [Id], [EAN]
                 FROM {esquema}.{tabla_loc}
                 WHERE Estado='1'
             """)
@@ -642,9 +604,8 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                 break
 
             for i, row in enumerate(registros):
-                id_ticket     = str(row[0])
-                ean           = str(row[1])
-                palabra_clave = str(row[2] or "")
+                id_ticket = str(row[0])
+                ean       = str(row[1])
 
                 try:
                     conn   = _fn_conn(in_config)
@@ -672,7 +633,6 @@ def hu02_consulta_y_reporte(in_config: dict) -> str:
                     resultado = _consultar_ean(
                         page=page,
                         ean=ean,
-                        palabra_clave=palabra_clave,
                         url_template=url_template,
                         ruta_screenshot=ruta_ss,
                         in_config=in_config,
