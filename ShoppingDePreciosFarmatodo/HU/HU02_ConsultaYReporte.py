@@ -632,7 +632,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
     cur_sq.execute(
-        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
+        f"SELECT TOP (?) Id, EAN, Descripcion, PLU FROM {esquema}.TicketInsumo WHERE Estado=1",
         (lote_debug,)
     )
     registros = cur_sq.fetchall()
@@ -667,12 +667,13 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
             id_t = str(row[0])
             ean  = str(row[1])
             desc = str(row[2] or "")
+            plu  = str(row[3] or "")
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
             print(f"\n  EAN: {ean}  |  {desc[:50]}")
             res = _consultar_ean_farmatodo(page, ean, url_template, selectores,
                                            ruta_ss, in_config, task_name)
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
-            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
+            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "PLU": plu, "RutaImagen": ruta_ss, **res})
     finally:
         try:
             context.close()
@@ -693,7 +694,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
                  r.get("estado", "99"), maquina,
-                 "", r["EAN"], r["Descripcion"], ahora,
+                 r.get("PLU", ""), r["EAN"], r["Descripcion"], ahora,
                  r.get("marca", ""), r.get("nombre_prd", ""), r.get("registro_invima", ""),
                  r.get("precio_unitario", ""),
                  r.get("precio_con_desc", ""), r.get("precio_sin_desc", ""), "",
@@ -712,10 +713,10 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins, url_template,
         ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingFarmatodo_{sello}.xlsx")
         df_debug = pd.DataFrame([{
             "FechaInsumo":         ahora,
-            "PLU":                 "",
-            "Descripción":         r.get("Descripcion", ""),
+            "PLU":                 r.get("PLU"),
+            "Descripción":         r.get("Descripcion"),
             "HoraConsulta":        ahora,
-            "EAN":                 r.get("EAN", ""),
+            "EAN":                 r.get("EAN"),
             "Estado":              r.get("estado", ""),
             "MarcaProducto":       r.get("marca", ""),
             "NombreProducto":      r.get("nombre_prd", ""),

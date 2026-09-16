@@ -281,8 +281,9 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                         const regVal  = regEl
                             ? parseFloat(regEl.getAttribute('data-value')  || '0') : 0;
 
-                        // Disponibilidad desde JSON del boton agregar
+                        // Disponibilidad y referencia (EAN) desde JSON del boton agregar
                         let availability = 'in stock';
+                        let reference    = '';
                         try {
                             const btn  = card.querySelector(
                                 'button[data-role="add_to_cart"]');
@@ -290,6 +291,7 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                                 btn?.getAttribute('data-item') || '{}');
                             availability = (item.availability || 'in stock')
                                 .toLowerCase();
+                            reference    = item.reference || '';
                         } catch(e) {}
 
                         return {
@@ -301,7 +303,8 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
                             precio_con:   saleVal > 0
                                 ? Math.round(saleVal).toString() : '',
                             pum:          pum,
-                            availability: availability
+                            availability: availability,
+                            reference:    reference
                         };
                     })()
                 """)
@@ -324,24 +327,35 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
         url_producto = datos["url"]
         resultado["url_producto"] = url_producto
 
-        # ── Validar nombre vs palabra clave ───────────────────────────────
-        kw = (palabra_clave or "").upper().strip()
-        if kw and kw not in nombre_prd.upper():
-            write_log("Info",
-                      f"HU02: EAN ({ean}) — Sin coincidencia: "
-                      f"nombre='{nombre_prd}', kw='{palabra_clave}'",
-                      task_name, in_config)
-            _tomar_screenshot(page, ruta_screenshot)
-            resultado.update({
-                "nombre_prd":    nombre_prd,
-                "url_producto":  url_producto,
-                "estado":        "99",
-                "observaciones": (
-                    "No existe coincidencia entre la informacion "
-                    "encontrada y el producto consultado"
-                ),
-            })
-            return resultado
+        # ── Validar que el resultado corresponde al EAN buscado ───────────
+        # data-item.reference contiene el EAN exacto del producto encontrado
+        # por Doofinder; es la fuente más fiable.  Como respaldo se comprueba
+        # si el EAN buscado aparece en la URL (Cafam siempre lo incluye).
+        # Solo si ninguna de las dos comprobaciones pasa se usa el nombre
+        # como filtro secundario para rechazar sustitutos de Doofinder.
+        # Esto resuelve falsos negativos por acentos/espacios: "Pro Lertus"
+        # vs "PROLERTUS", "Acetaminofén" vs "ACETAMINOFEN", etc.
+        referencia = datos.get("reference", "")
+        ean_correcto = (bool(referencia) and referencia == ean) \
+                    or (bool(ean) and ean in url_producto)
+        if not ean_correcto:
+            kw = (palabra_clave or "").upper().strip()
+            if kw and kw not in nombre_prd.upper():
+                write_log("Info",
+                          f"HU02: EAN ({ean}) — Sin coincidencia: "
+                          f"nombre='{nombre_prd}', kw='{palabra_clave}'",
+                          task_name, in_config)
+                _tomar_screenshot(page, ruta_screenshot)
+                resultado.update({
+                    "nombre_prd":    nombre_prd,
+                    "url_producto":  url_producto,
+                    "estado":        "99",
+                    "observaciones": (
+                        "No existe coincidencia entre la informacion "
+                        "encontrada y el producto consultado"
+                    ),
+                })
+                return resultado
 
         sin_stock = datos["availability"] not in ("in stock", "disponible", "")
         precio_sin = datos["precio_sin"]
@@ -627,7 +641,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
     conn_sq = conectar_bd_debug(in_config)
     cur_sq  = conn_sq.cursor()
     cur_sq.execute(
-        f"SELECT TOP (?) Id, EAN, Descripcion FROM {esquema}.TicketInsumo WHERE Estado=1",
+        f"SELECT TOP (?) Id, EAN, Descripcion, PLU FROM {esquema}.TicketInsumo WHERE Estado=1",
         (lote_debug,)
     )
     registros = cur_sq.fetchall()
@@ -655,6 +669,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             id_t = str(row[0])
             ean  = str(row[1])
             desc = str(row[2] or "")
+            plu  = str(row[3] or "")
             m    = re.search(r'[a-zA-Z]{3,}', desc)
             kw   = m.group(0) if m else ""
             ruta_ss = os.path.join(ruta_ss_base, f"{ean}_{id_t}.jpg")
@@ -662,7 +677,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
             res = _consultar_ean_cafam(page, ean, kw, url_template, ruta_ss, in_config, task_name,
                                        primer_ean=(i == 0))
             print(f"  Estado: {res['estado']} | Nombre: {res['nombre_prd']} | Precio: {res['precio_con_desc']}")
-            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "RutaImagen": ruta_ss, **res})
+            resultados.append({"Id": id_t, "EAN": ean, "Descripcion": desc, "PLU": plu, "RutaImagen": ruta_ss, **res})
     finally:
         try:
             context.close()
@@ -683,7 +698,7 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ahora, ahora, ahora,
                  r.get("estado", "99"), r.get("observaciones", ""), 0, maquina,
-                 "", r["EAN"], r["Descripcion"], "", ahora,
+                 r.get("PLU", ""), r["EAN"], r["Descripcion"], "", ahora,
                  r.get("marca", ""), r.get("nombre_prd", ""), "",
                  r.get("precio_unitario", ""), r.get("precio_con_desc", ""),
                  r.get("precio_sin_desc", ""), r.get("porc_descuento", ""),
@@ -702,10 +717,10 @@ def _scraping_debug(browser, in_config, esquema, tabla_ins,
         ruta_excel = str(ruta_debug / f"DEBUG_ReportePricingCafam_{sello}.xlsx")
         df_debug = pd.DataFrame([{
             "FechaInsumo":        ahora,
-            "PLU":                "",
-            "Descripción":        r.get("Descripcion", ""),
+            "PLU":                r.get("PLU"),
+            "Descripción":        r.get("Descripcion"),
             "HoraConsulta":       ahora,
-            "EAN":                r.get("EAN", ""),
+            "EAN":                r.get("EAN"),
             "Estado":             r.get("estado", ""),
             "MarcaProducto":      r.get("marca", ""),
             "NombreProducto":     r.get("nombre_prd", ""),
