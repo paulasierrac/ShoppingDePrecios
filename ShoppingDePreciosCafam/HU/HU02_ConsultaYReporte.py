@@ -4,10 +4,11 @@ HU02 - Consulta y Reporte
 Nombre de la iniciativa: Shopping de Precios Cafam
 Autor: Paula Sierra — Net Applications
 Descripcion: Consulta precios en drogueriascafam.com.co por EAN via JavaScript.
-             La busqueda retorna tarjetas de resultado; el bot valida que el URL
-             del primer resultado contenga el EAN, navega al detalle y extrae
-             los campos de precio usando selectores CSS via JS.
-Ultima modificacion: 01/07/2026
+             La busqueda retorna tarjetas de resultado (Doofinder); el bot itera
+             todas las tarjetas buscando la cuyo data-item.reference coincida con
+             el EAN buscado, extrae los precios directamente de la tarjeta
+             (data-value) y valida disponibilidad desde el JSON del boton agregar.
+Ultima modificacion: 16/09/2026
 Propiedad de Colsubsidio
 ================================================================================
 
@@ -17,12 +18,12 @@ Flujo principal:
   3. Crea carpeta de screenshots.
   4. Bucle de scraping por lotes (LoteCafam, default 1000).
      Para cada EAN:
-       a. Navega a URL de busqueda y espera carga (30s).
-       b. Toma el primer resultado (Cafam usa slugs internos, no el EAN en la URL).
-       c. Valida nombre del producto vs palabra clave.
-       d. Navega a la pagina de detalle y extrae precios via JS.
-       e. Detecta "Sin stock".
-       f. Actualiza BD.
+       a. Navega a URL de busqueda y espera carga (Doofinder async).
+       b. Itera todas las tarjetas buscando data-item.reference == EAN buscado.
+          Si ninguna coincide, usa la primera tarjeta y valida por nombre.
+       c. Extrae precios (data-value), marca, PUM y disponibilidad.
+       d. Detecta "Sin stock" / "No disponible".
+       e. Actualiza BD.
      Espera DelayCafam segundos entre lotes.
   5. Limpieza de separadores de precio (coma a punto).
   6. Generacion de reporte Excel y envio de correo.
@@ -30,7 +31,6 @@ Flujo principal:
 Estados:
   1  : Pendiente
   2  : Producto encontrado (incluye sin stock con Observaciones='Sin stock')
-  3  : Primer resultado encontrado pero nombre no coincide con el EAN
   99 : Sin informacion / no encontrado
 """
 
@@ -242,72 +242,89 @@ def _consultar_ean_cafam(page: Page, ean: str, palabra_clave: str,
             _tomar_screenshot(page, ruta_screenshot)
             return resultado
 
-        # ── Extraer datos de la primera tarjeta de resultado ─────────────
-        # La tarjeta ya contiene precio (data-value), marca (input hidden) y
-        # disponibilidad (data-item JSON). No hace falta navegar al detalle.
-        # Se excluyen tarjetas dentro de .dfd-no-results (recomendados).
+        # ── Buscar tarjeta coincidente o usar la primera como fallback ───
+        # Doofinder puede devolver varios resultados por relevancia; el
+        # producto con el EAN buscado no siempre es el primero.  Se itera
+        # sobre todas las tarjetas buscando la cuyo data-item.reference
+        # coincida exactamente con el EAN buscado.  Si ninguna coincide se
+        # usa la primera tarjeta y la validación de nombre actúa de filtro.
         datos = None
         for intento in range(3):
             try:
-                datos = page.evaluate(r"""
-                    (() => {
-                        // Primera tarjeta fuera del bloque "sin resultados"
-                        const card = document.querySelector(
+                datos = page.evaluate("""
+                    (targetEan) => {
+                        function extraerDatos(card) {
+                            const titulo = card.querySelector('.dfd-card-title')
+                                              ?.getAttribute('title')
+                                        || card.querySelector('.dfd-card-title')
+                                              ?.innerText?.trim() || '';
+                            const url    = card.querySelector('.dfd-card-link')?.href || '';
+                            const marca  = card.querySelector('input[name="item_brand"]')
+                                              ?.value || '';
+
+                            // Transformar "PUM: $ 1,850.00 TAB" → "(TAB a $ 1,850.00)"
+                            const pumRaw = card.querySelector('.dfd-card-pum')
+                                              ?.innerText?.trim() || '';
+                            const pumM   = pumRaw.match(/PUM:\\s*\\$\\s*([\\d,.]+)\\s*([A-Za-z]+)/);
+                            const pum    = pumM
+                                ? `(${pumM[2]} a $ ${pumM[1]})`
+                                : pumRaw.replace(/^PUM:\\s*/i, '').trim();
+
+                            // Precios desde data-value (evita parsear "$17,080" o "9.81e4")
+                            const saleEl  = card.querySelector('.dfd-card-price--sale');
+                            const regEl   = card.querySelector('.dfd-card-price');
+                            const saleVal = saleEl
+                                ? parseFloat(saleEl.getAttribute('data-value') || '0') : 0;
+                            const regVal  = regEl
+                                ? parseFloat(regEl.getAttribute('data-value')  || '0') : 0;
+
+                            // Disponibilidad y referencia (EAN) desde JSON del boton agregar
+                            let availability = 'in stock';
+                            let reference    = '';
+                            try {
+                                const btn  = card.querySelector(
+                                    'button[data-role="add_to_cart"]');
+                                const item = JSON.parse(
+                                    btn?.getAttribute('data-item') || '{}');
+                                availability = (item.availability || 'in stock')
+                                    .toLowerCase();
+                                reference    = item.reference || '';
+                            } catch(e) {}
+
+                            return {
+                                titulo:       titulo,
+                                url:          url,
+                                marca:        marca,
+                                precio_sin:   regVal  > 0
+                                    ? Math.round(regVal).toString()  : '',
+                                precio_con:   saleVal > 0
+                                    ? Math.round(saleVal).toString() : '',
+                                pum:          pum,
+                                availability: availability,
+                                reference:    reference
+                            };
+                        }
+
+                        const cards = Array.from(document.querySelectorAll(
                             '.dfd-card-live:not(.dfd-no-results .dfd-card-live)'
-                        );
-                        if (!card) return null;
+                        ));
+                        if (!cards.length) return null;
 
-                        const titulo = card.querySelector('.dfd-card-title')
-                                          ?.getAttribute('title')
-                                    || card.querySelector('.dfd-card-title')
-                                          ?.innerText?.trim() || '';
-                        const url    = card.querySelector('.dfd-card-link')?.href || '';
-                        const marca  = card.querySelector('input[name="item_brand"]')
-                                          ?.value || '';
+                        // Buscar tarjeta cuyo EAN coincida exactamente
+                        for (const card of cards) {
+                            try {
+                                const btn  = card.querySelector('button[data-role="add_to_cart"]');
+                                const item = JSON.parse(btn?.getAttribute('data-item') || '{}');
+                                if (item.reference === targetEan) {
+                                    return extraerDatos(card);
+                                }
+                            } catch(e) {}
+                        }
 
-                        // Transformar "PUM: $ 1,850.00 TAB" → "(TAB a $ 1,850.00)"
-                        const pumRaw = card.querySelector('.dfd-card-pum')
-                                          ?.innerText?.trim() || '';
-                        const pumM   = pumRaw.match(/PUM:\s*\$\s*([\d,.]+)\s*([A-Za-z]+)/);
-                        const pum    = pumM
-                            ? `(${pumM[2]} a $ ${pumM[1]})`
-                            : pumRaw.replace(/^PUM:\s*/i, '').trim();
-
-                        // Precios desde data-value (evita parsear "$17,080" o "9.81e4")
-                        const saleEl  = card.querySelector('.dfd-card-price--sale');
-                        const regEl   = card.querySelector('.dfd-card-price');
-                        const saleVal = saleEl
-                            ? parseFloat(saleEl.getAttribute('data-value') || '0') : 0;
-                        const regVal  = regEl
-                            ? parseFloat(regEl.getAttribute('data-value')  || '0') : 0;
-
-                        // Disponibilidad y referencia (EAN) desde JSON del boton agregar
-                        let availability = 'in stock';
-                        let reference    = '';
-                        try {
-                            const btn  = card.querySelector(
-                                'button[data-role="add_to_cart"]');
-                            const item = JSON.parse(
-                                btn?.getAttribute('data-item') || '{}');
-                            availability = (item.availability || 'in stock')
-                                .toLowerCase();
-                            reference    = item.reference || '';
-                        } catch(e) {}
-
-                        return {
-                            titulo:       titulo,
-                            url:          url,
-                            marca:        marca,
-                            precio_sin:   regVal  > 0
-                                ? Math.round(regVal).toString()  : '',
-                            precio_con:   saleVal > 0
-                                ? Math.round(saleVal).toString() : '',
-                            pum:          pum,
-                            availability: availability,
-                            reference:    reference
-                        };
-                    })()
-                """)
+                        // Fallback: primera tarjeta (se validara por nombre)
+                        return extraerDatos(cards[0]);
+                    }
+                """, ean)
                 if datos and datos.get("url"):
                     break
                 page.wait_for_timeout(ESPERA_REINT)
