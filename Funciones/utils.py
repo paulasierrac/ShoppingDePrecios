@@ -49,7 +49,7 @@ def obtener_config() -> dict:
         _sys.path.insert(0, str(_root))
 
     from dotenv import load_dotenv
-    load_dotenv(_root / ".env", override=False)
+    load_dotenv(_root / ".env", override=True)
 
     from Config.Configuracion import CargarVault
     secretos = CargarVault(
