@@ -20,16 +20,16 @@ _ROOT = Path(__file__).resolve().parent
 FARMACIAS = [
     "ShoppingDePreciosLocatel",
     "ShoppingDePreciosCafam",
-    "ShoppingDePreciosComfandi",
+    #"ShoppingDePreciosComfandi",
     "ShoppingDePreciosCruzVerde",
     "ShoppingDePreciosExito",
     "ShoppingDePreciosFarmatodo",
-    "ShoppingDePreciosLaRebaja",
-    "ShoppingDePreciosMedipiel",
-    "ShoppingDePreciosOlimpica",
-    "ShoppingDePreciosOrtopedicos",
-    "ShoppingDePreciosPasteur",
-    "ShoppingDePreciosAlemana",
+    #"ShoppingDePreciosLaRebaja",
+    #"ShoppingDePreciosMedipiel",
+    #"ShoppingDePreciosOlimpica",
+    #"ShoppingDePreciosOrtopedicos",
+    #"ShoppingDePreciosPasteur",
+    #"ShoppingDePreciosAlemana",
 ]
 
 
