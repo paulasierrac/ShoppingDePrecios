@@ -62,12 +62,13 @@ def main() -> None:
               f"Inicia ejecucion del BOT ({io_config.get('NombreIniciativaFarmatodo', '')})",
               TASK_NAME, io_config)
 
-    p_system_exception = cargar_tabla_envio_correos(io_config)
-    if p_system_exception:
-        write_log("Error",
-                  f"Se presento el error ({p_system_exception}) en la funcion CargarTablaEnvioCorreos",
-                  TASK_NAME, io_config)
-        p_system_exception = ""
+    if not _DEBUG:
+        p_system_exception = cargar_tabla_envio_correos(io_config)
+        if p_system_exception:
+            write_log("Error",
+                      f"Se presento el error ({p_system_exception}) en la funcion CargarTablaEnvioCorreos",
+                      TASK_NAME, io_config)
+            p_system_exception = ""
 
     try:
         p_aux_dic    = {"$NombrePagina$": io_config.get("DrogueriaFarmatodo", "Farmatodo")}

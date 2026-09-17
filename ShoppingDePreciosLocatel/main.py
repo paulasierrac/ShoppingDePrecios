@@ -85,14 +85,15 @@ def main() -> None:
     # ----------------------------------------------------------------
     # PASO 2: Cargar tabla de envio de correos
     # ----------------------------------------------------------------
-    p_system_exception = cargar_tabla_envio_correos(io_config)
-    if p_system_exception:
-        write_log(
-            "Error",
-            f"Se presento el error ({p_system_exception}) en la funcion CargarTablaEnvioCorreos",
-            TASK_NAME, io_config
-        )
-        p_system_exception = ""  # no critico — se continua
+    if not _DEBUG:
+        p_system_exception = cargar_tabla_envio_correos(io_config)
+        if p_system_exception:
+            write_log(
+                "Error",
+                f"Se presento el error ({p_system_exception}) en la funcion CargarTablaEnvioCorreos",
+                TASK_NAME, io_config
+            )
+            p_system_exception = ""  # no critico — se continua
 
     try:
         # ----------------------------------------------------------------
