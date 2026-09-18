@@ -879,13 +879,13 @@ def _generar_reporte_fecha(in_config: dict, esquema: str, tabla_loc: str,
     nombre_resultado = in_config["NombreResultado"]
     nombre_hoja      = in_config["NombreHojaResultado"]
 
+    _d = fecha_sello[:8]  # YYYYMMDD
+    _sub = os.path.join(_d[:4], _d[4:6], _d[6:8])
     if in_config.get("_debug"):
-        _now = datetime.now()
-        ruta_reporte = str(_PROJECT_ROOT / "debug"
-                           / str(_now.year) / f"{_now.month:02d}" / f"{_now.day:02d}")
+        ruta_reporte = str(_PROJECT_ROOT / "debug" / _sub)
         nombre_excel = f"DEBUG_{nombre_resultado}{fecha_sello}.xlsx"
     else:
-        ruta_reporte = in_config.get("RutaReporte") or ""
+        ruta_reporte = os.path.join(in_config.get("RutaReporte") or "", _sub)
         nombre_excel = f"{nombre_resultado}{fecha_sello}.xlsx"
 
     os.makedirs(ruta_reporte, exist_ok=True)
