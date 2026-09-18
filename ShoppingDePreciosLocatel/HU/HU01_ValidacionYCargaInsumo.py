@@ -64,6 +64,26 @@ def hu01_validacion_y_carga_insumo(in_config: dict) -> str:
         # PASO 2: Verificar existencia del archivo
         # ----------------------------------------------------------------
         if not os.path.isfile(ruta_insumo):
+            # Otra farmacia pudo haber cargado el insumo ya en esta misma ejecucion
+            try:
+                _esq = in_config.get("Scheme", "[ShoppingDePrecios]")
+                _tbl = in_config.get("TablaTicketInsumo", "[TicketInsumo]")
+                _c   = conectar_bd(in_config)
+                _cur = _c.cursor()
+                _cur.execute(
+                    f"SELECT COUNT(*) FROM {_esq}.{_tbl} "
+                    f"WHERE CAST(FechaInicio AS DATE) = CAST(GETDATE() AS DATE)"
+                )
+                _cnt = _cur.fetchone()[0]
+                _c.close()
+                if _cnt > 0:
+                    write_log("Info",
+                              f"HU01: Insumo ya cargado ({_cnt} registros en {_tbl})",
+                              task_name, in_config)
+                    write_log("Info", "Finaliza HU01", task_name, in_config)
+                    return ""
+            except Exception:
+                pass
             write_log("Info", f"HU01: NO existe el archivo de la ruta ({ruta_insumo})", task_name, in_config)
             write_log("Info", "Finaliza HU01", task_name, in_config)
             return f"Archivo de insumo no encontrado: {ruta_insumo}"
