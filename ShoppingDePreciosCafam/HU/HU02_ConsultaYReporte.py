@@ -81,18 +81,7 @@ def _proxy_sistema_windows() -> dict:
 
 
 def _asegurar_chromium(in_config: dict, task_name: str) -> None:
-    """Descarga Playwright Chromium si no existe para el usuario actual."""
-    import subprocess
-    try:
-        with sync_playwright() as _pw:
-            exec_path = _pw.chromium.executable_path
-        if os.path.isfile(exec_path):
-            return
-    except Exception:
-        pass
-    write_log("Info", "HU02: Playwright Chromium no encontrado — descargando...", task_name, in_config)
-    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-    write_log("Info", "HU02: Playwright Chromium instalado correctamente", task_name, in_config)
+    pass
 
 
 def _js_text(page: Page, selector: str, default: str = "") -> str:
